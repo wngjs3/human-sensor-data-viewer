@@ -19,6 +19,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; }
   header { padding: 16px 24px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
@@ -72,17 +73,33 @@
   th, td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
   th { position: sticky; top: 0; background: var(--soft); font-weight: 600; }
   .raw { max-height: 500px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .card-head h2 { margin: 0; }
+  .seg { display: flex; gap: 2px; background: var(--soft); border-radius: 8px; padding: 2px; }
+  .seg button { background: transparent; color: var(--muted); padding: 4px 10px; font-size: 12px; font-weight: 500; }
+  .seg button.on { background: var(--panel); color: var(--text); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .tile { cursor: pointer; border-radius: 10px; overflow: hidden; background: var(--soft); }
+  .tile:hover { outline: 2px solid var(--accent); }
+  .thumb { aspect-ratio: 16 / 9; background: #000; display: flex; align-items: center; justify-content: center;
+    color: #8d96a5; font-size: 12px; font-weight: 600; }
+  .thumb.noimg { background: var(--line); color: var(--muted); }
+  .thumb video, .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cap { padding: 6px 8px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap small { display: block; color: var(--muted); font-size: 11px; }
+  .media { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
 </style>
 </head>
 <body>
 <header>
   <h1>S3 Sensor Viewer</h1>
   <span class="loc" id="loc"></span>
+  <button class="ghost" id="settingsBtn" style="margin-left:auto" hidden>⚙ 설정</button>
 </header>
 
 <main>
   <div class="side">
-    <section class="card">
+    <section class="card" id="settings">
       <h2>연결 설정</h2>
       <label>키 붙여넣기 (env / ~/.aws/credentials / STS JSON)</label>
       <textarea id="paste" rows="3" spellcheck="false" placeholder="export AWS_ACCESS_KEY_ID=...&#10;export AWS_SECRET_ACCESS_KEY=..."></textarea>
@@ -93,12 +110,12 @@
       <label>Session Token (선택)</label>
       <input type="password" id="st" autocomplete="off">
       <div class="row">
-        <div><label>Region</label><input type="text" id="region" value="ap-northeast-2"></div>
+        <div><label>Region</label><input type="text" id="region" value="us-west-2"></div>
         <div><label>Bucket</label><input type="text" id="bucket" value="riselab-data-bucket"></div>
       </div>
       <label>Prefix</label>
       <input type="text" id="prefix" value="share/data/human-sensor/raw/">
-      <label class="check"><input type="checkbox" id="remember"> 이 브라우저에 키 저장</label>
+      <label class="check"><input type="checkbox" id="remember" checked> 이 브라우저에 키 저장</label>
       <div class="row">
         <button id="connect">연결</button>
         <button class="ghost" id="forget" style="flex:0 0 auto">키 지우기</button>
@@ -111,7 +128,10 @@
     </section>
 
     <section class="card">
-      <h2>파일</h2>
+      <div class="card-head">
+        <h2>파일</h2>
+        <div class="seg" id="viewSeg"><button data-v="list">목록</button><button data-v="grid">이미지로 보기</button></div>
+      </div>
       <div class="crumbs" id="crumbs"></div>
       <div class="list" id="list"><div class="empty">키를 입력하고 연결하세요</div></div>
       <button class="ghost" id="more" style="display:none;width:100%;margin-top:8px">더 보기</button>
@@ -130,15 +150,30 @@ const $ = id => document.getElementById(id);
 const STORE = 's3viewer.v1';
 const MAX_ROWS_TABLE = 200, MAX_POINTS = 4000, MAX_BYTES = 50 * 1024 * 1024;
 
+const VIDEO = /\.(mp4|webm|mov|m4v|mkv|ogv)$/i, IMAGE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
+const isMedia = key => VIDEO.test(key) || IMAGE.test(key);
+
 let client = null, cfg = null, curPrefix = '', nextToken = null, chart = null;
+let listing = { dirs: [], files: [] };
+let view = 'list';
+try { view = localStorage.getItem('s3viewer.view') || 'list'; } catch {}
+
+function setView(v) {
+  view = v;
+  try { localStorage.setItem('s3viewer.view', v); } catch {}
+  $('viewSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  if (!client) return;
+  if (v === 'grid') renderGrid();
+  else $('viewer').innerHTML = '<div class="empty">왼쪽에서 파일을 선택하세요</div>';
+}
+$('viewSeg').querySelectorAll('button').forEach(b => b.onclick = () => setView(b.dataset.v));
+setView(view);
 
 // --- settings ---
+let saved = null;
 try {
-  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
-  if (saved) {
-    for (const k of ['ak', 'sk', 'st', 'region', 'bucket', 'prefix']) if (saved[k] != null) $(k).value = saved[k];
-    $('remember').checked = true;
-  }
+  saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+  if (saved) for (const k of ['ak', 'sk', 'st', 'region', 'bucket', 'prefix']) if (saved[k] != null) $(k).value = saved[k];
 } catch {}
 
 $('cors').textContent = JSON.stringify([{
@@ -191,8 +226,16 @@ $('connect').onclick = async () => {
     service: 's3', region: cfg.region,
   });
   showMsg('connMsg', '');
-  await openPrefix(cfg.prefix);
+  if (await openPrefix(cfg.prefix)) showSettings(false);
 };
+
+// 연결된 뒤에는 설정 카드를 숨기고 ⚙ 버튼으로만 열기
+function showSettings(show) {
+  $('settings').hidden = !show;
+  $('settingsBtn').hidden = !client;
+  $('settingsBtn').textContent = show ? '설정 닫기' : '⚙ 설정';
+}
+$('settingsBtn').onclick = () => showSettings($('settings').hidden);
 
 // --- S3 ---
 const baseUrl = () => `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com`;
@@ -212,6 +255,16 @@ async function s3(url) {
   return res;
 }
 
+async function listXml(qs) {
+  const text = await (await s3(`${baseUrl()}/?${qs}`)).text();
+  return new DOMParser().parseFromString(text, 'application/xml');
+}
+
+// 서명된 GET URL — <video>/<img>가 헤더 없이 직접 스트리밍
+async function presign(key) {
+  return (await client.sign(`${baseUrl()}/${encKey(key)}`, { aws: { signQuery: true } })).url;
+}
+
 async function openPrefix(prefix, append = false) {
   curPrefix = prefix;
   renderCrumbs();
@@ -219,7 +272,7 @@ async function openPrefix(prefix, append = false) {
   const qs = new URLSearchParams({ 'list-type': '2', prefix, delimiter: '/', 'max-keys': '500' });
   if (append && nextToken) qs.set('continuation-token', nextToken);
   try {
-    const xml = new DOMParser().parseFromString(await (await s3(`${baseUrl()}/?${qs}`)).text(), 'application/xml');
+    const xml = await listXml(qs);
     const dirs = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(n => n.textContent);
     const files = [...xml.querySelectorAll('Contents')].map(n => ({
       key: n.querySelector('Key').textContent,
@@ -228,11 +281,17 @@ async function openPrefix(prefix, append = false) {
     })).filter(f => f.key !== prefix);
     nextToken = xml.querySelector('IsTruncated')?.textContent === 'true'
       ? xml.querySelector('NextContinuationToken')?.textContent : null;
+    if (append) { listing.dirs.push(...dirs); listing.files.push(...files); }
+    else listing = { dirs, files };
     renderList(dirs, files, append);
+    if (view === 'grid') renderGrid();
     if (!append) showMsg('connMsg', '연결됨', 'ok');
+    return true;
   } catch (e) {
     $('list').innerHTML = '<div class="empty">목록을 불러오지 못했습니다</div>';
     showMsg('connMsg', e.message, 'err');
+    showSettings(true);
+    return false;
   }
 }
 
@@ -259,7 +318,8 @@ function renderList(dirs, files, append) {
     list.append(el);
   }
   for (const f of files) {
-    const el = div('item', `<span class="name">${esc(f.key.slice(curPrefix.length))}</span>
+    const icon = VIDEO.test(f.key) ? '🎬 ' : IMAGE.test(f.key) ? '🖼 ' : '';
+    const el = div('item', `<span class="name">${icon}${esc(f.key.slice(curPrefix.length))}</span>
       <span class="meta">${fmtSize(f.size)} · ${f.modified.slice(0, 10)}</span>`);
     el.onclick = () => {
       list.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
@@ -272,8 +332,30 @@ function renderList(dirs, files, append) {
 }
 
 // --- file viewer ---
+function fileHead(f) {
+  return `<div class="viewer-head">
+    <span class="row" style="flex:1;min-width:0">
+      ${view === 'grid' ? '<button class="ghost" id="back" style="flex:0 0 auto">← 이미지 목록</button>' : ''}
+      <span class="file">${esc(f.key.split('/').pop())}</span></span>
+    <span class="meta" style="color:var(--muted);font-size:12px">${fmtSize(f.size)} · ${f.modified.replace('T', ' ').slice(0, 19)}</span></div>`;
+}
+
+function setViewer(html) {
+  $('viewer').innerHTML = html;
+  if ($('back')) $('back').onclick = renderGrid;
+}
+
 async function openFile(f) {
   const v = $('viewer');
+  if (isMedia(f.key)) {
+    const isVideo = VIDEO.test(f.key);
+    setViewer(fileHead(f) + `<${isVideo ? 'video controls playsinline' : 'img'} class="media"></${isVideo ? 'video' : 'img'}>`);
+    const el = v.querySelector('.media');
+    el.onerror = () => el.replaceWith(div('msg err',
+      isVideo ? '브라우저에서 재생할 수 없는 형식이거나(코덱) 권한/CORS 문제입니다' : '이미지를 불러오지 못했습니다'));
+    el.src = await presign(f.key);
+    return;
+  }
   v.innerHTML = `<div class="empty">불러오는 중… (${fmtSize(f.size)})</div>`;
   if (f.size > MAX_BYTES && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) {
     v.innerHTML = '<div class="empty">취소됨</div>'; return;
@@ -346,12 +428,10 @@ function flatten(obj, pre = '', out = {}) {
 }
 
 function renderFile(f, rows, text) {
-  const v = $('viewer');
-  const head = `<div class="viewer-head"><span class="file">${esc(f.key.split('/').pop())}</span>
-    <span class="meta" style="color:var(--muted);font-size:12px">${fmtSize(f.size)} · ${f.modified.replace('T', ' ').slice(0, 19)}</span></div>`;
+  const head = fileHead(f);
 
   if (!rows || !rows.length) {
-    v.innerHTML = head + `<pre class="raw">${esc(text.slice(0, 20000))}${text.length > 20000 ? '\n…' : ''}</pre>`;
+    setViewer(head + `<pre class="raw">${esc(text.slice(0, 20000))}${text.length > 20000 ? '\n…' : ''}</pre>`);
     return;
   }
 
@@ -363,7 +443,7 @@ function renderFile(f, rows, text) {
   const xDefault = cols.find(c => /time|date|ts|stamp/i.test(c)) || '(행 번호)';
   const yDefault = numeric.filter(c => c !== xDefault).slice(0, 3);
 
-  v.innerHTML = head + `
+  setViewer(head + `
     <div class="stats">
       <div class="stat"><b>${rows.length.toLocaleString()}</b><span>행</span></div>
       <div class="stat"><b>${cols.length}</b><span>컬럼</span></div>
@@ -383,7 +463,7 @@ function renderFile(f, rows, text) {
       <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
       <tbody>${rows.slice(0, MAX_ROWS_TABLE).map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
-    ${rows.length > MAX_ROWS_TABLE ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">표는 처음 ${MAX_ROWS_TABLE}행만 표시</div>` : ''}`;
+    ${rows.length > MAX_ROWS_TABLE ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">표는 처음 ${MAX_ROWS_TABLE}행만 표시</div>` : ''}`);
 
   if (numeric.length) {
     const draw = () => drawChart(rows, $('xSel').value, [...$('ySel').querySelectorAll('input:checked')].map(i => i.value));
@@ -391,6 +471,72 @@ function renderFile(f, rows, text) {
     $('ySel').onchange = draw;
     draw();
   }
+}
+
+// --- 이미지로 보기: 영상 첫 프레임 / 이미지 썸네일 그리드 ---
+function renderGrid() {
+  const { dirs, files } = listing;
+  setViewer(`<div class="viewer-head"><span class="file">${esc(curPrefix)}</span>
+    <span class="meta" style="color:var(--muted);font-size:12px">폴더 ${dirs.length} · 파일 ${files.length}</span></div>
+    ${dirs.length || files.length ? '<div class="grid" id="grid"></div>' : '<div class="empty">비어 있음</div>'}`);
+  const grid = $('grid');
+  if (!grid) return;
+  // 화면에 보이는 타일만 불러옴
+  const io = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting) { io.unobserve(e.target); e.target.load(); }
+  }), { rootMargin: '200px' });
+
+  for (const d of dirs) {
+    const t = tile(`📁 ${d.slice(curPrefix.length)}`, '');
+    t.onclick = () => openPrefix(d);
+    t.load = async () => fillThumb(t, await firstMedia(d));
+    grid.append(t); io.observe(t);
+  }
+  for (const f of files) {
+    const t = tile(f.key.slice(curPrefix.length), fmtSize(f.size));
+    t.onclick = () => openFile(f);
+    t.load = () => fillThumb(t, f.key);
+    grid.append(t); io.observe(t);
+  }
+}
+
+function tile(name, sub) {
+  return div('tile', `<div class="thumb">…</div>
+    <div class="cap" title="${esc(name)}">${esc(name)}${sub ? `<small>${esc(sub)}</small>` : ''}</div>`);
+}
+
+// 폴더 안 첫 영상(없으면 첫 이미지)을 대표 장면으로
+async function firstMedia(prefix) {
+  try {
+    const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix, 'max-keys': '1000' }));
+    const keys = [...xml.querySelectorAll('Contents > Key')].map(n => n.textContent);
+    return keys.find(k => VIDEO.test(k)) || keys.find(k => IMAGE.test(k)) || null;
+  } catch { return null; }
+}
+
+async function fillThumb(t, key) {
+  const th = t.querySelector('.thumb');
+  if (!key || !isMedia(key)) {
+    th.classList.add('noimg');
+    th.textContent = key ? key.split('.').pop().toUpperCase() : '미리보기 없음';
+    return;
+  }
+  const url = await presign(key);
+  th.textContent = '';
+  if (IMAGE.test(key)) {
+    const img = document.createElement('img');
+    img.src = url;
+    th.append(img);
+    return;
+  }
+  const vid = document.createElement('video');
+  Object.assign(vid, { muted: true, playsInline: true, preload: 'metadata', loop: true });
+  vid.src = url + '#t=0.1';
+  vid.onerror = () => { th.classList.add('noimg'); th.textContent = '재생 불가'; };
+  th.append(vid);
+  // 마우스 올리면 미리 재생
+  t.onmouseenter = () => vid.play().catch(() => {});
+  t.onmouseleave = () => { vid.pause(); vid.currentTime = 0.1; };
 }
 
 function drawChart(rows, x, ys) {
@@ -426,6 +572,9 @@ function div(cls, html) { const d = document.createElement('div'); d.className =
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 function fmtSize(b) { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (b >= 1024 && i < 3) { b /= 1024; i++; } return `${b.toFixed(i ? 1 : 0)} ${u[i]}`; }
 function showMsg(id, text, kind) { $(id).innerHTML = text ? `<div class="msg ${kind}">${esc(text)}</div>` : ''; }
+
+// 저장된 키가 있으면 설정 화면 없이 바로 연결
+if (saved?.ak && saved?.sk) { $('settings').hidden = true; $('connect').click(); }
 </script>
 </body>
 </html>
