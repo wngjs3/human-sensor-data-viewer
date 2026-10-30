@@ -87,6 +87,30 @@
   .thumb video, .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .cap { padding: 6px 8px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cap small { display: block; color: var(--muted); font-size: 11px; }
+  .selbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .selbar button { padding: 5px 10px; font-size: 12px; }
+  .item input.pick { margin: 0 6px 0 0; vertical-align: -2px; }
+  .mc-panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
+  .mc-panel { background: var(--soft); border-radius: 10px; padding: 8px; min-width: 0; }
+  .mc-panel.wide { grid-column: 1 / -1; }
+  .mc-panel .media { max-height: 50vh; }
+  .mc-title { display: block; font: 11px ui-monospace, Menlo, monospace; color: var(--muted); margin-bottom: 6px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mc-canvas { width: 100%; height: 220px; display: block; touch-action: none; cursor: grab; }
+  .mc-timeline { position: sticky; top: 0; z-index: 2; display: flex; gap: 10px; align-items: center;
+    background: var(--panel); padding: 8px 0; margin-bottom: 8px; }
+  .mc-play { width: 44px; flex: 0 0 auto; }
+  .mc-seek { flex: 1; accent-color: var(--accent); min-width: 0; }
+  .mc-time { font: 12px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; }
+  .mc-speed { width: auto; flex: 0 0 auto; }
+  .mc-charts { display: flex; flex-direction: column; gap: 14px; }
+  .mc-chart-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+  .mc-chart-head .mc-title { margin: 0; max-width: 100%; }
+  .mc-chips { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+  .mc-chips .chip { font-weight: 600; }
+  .mc-add { width: auto; padding: 3px 8px; font-size: 12px; }
+  .mc-chart-wrap { position: relative; height: 150px; }
+  .mc-cursor { position: absolute; top: 0; bottom: 20px; width: 1.5px; background: var(--danger); pointer-events: none; }
   .media { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
 </style>
 </head>
@@ -133,6 +157,10 @@
         <div class="seg" id="viewSeg"><button data-v="list">목록</button><button data-v="grid">이미지로 보기</button></div>
       </div>
       <div class="crumbs" id="crumbs"></div>
+      <div class="selbar">
+        <label class="check" style="margin:0"><input type="checkbox" id="selAll"> 전체 선택</label>
+        <button class="ghost" id="dlBtn" disabled>선택 다운로드</button>
+      </div>
       <div class="list" id="list"><div class="empty">키를 입력하고 연결하세요</div></div>
       <button class="ghost" id="more" style="display:none;width:100%;margin-top:8px">더 보기</button>
     </section>
@@ -145,13 +173,18 @@
 
 <script type="module">
 import { AwsClient } from 'https://cdn.jsdelivr.net/npm/aws4fetch@1.0.20/dist/aws4fetch.esm.mjs';
+import { firstFrame } from './mcap.js';
+import { renderMcap } from './mcap-view.js';
 
 const $ = id => document.getElementById(id);
 const STORE = 's3viewer.v1';
 const MAX_ROWS_TABLE = 200, MAX_POINTS = 4000, MAX_BYTES = 50 * 1024 * 1024;
 
 const VIDEO = /\.(mp4|webm|mov|m4v|mkv|ogv)$/i, IMAGE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
+const MCAP = /\.mcap$/i, MAX_MCAP = 1024 ** 3;
 const isMedia = key => VIDEO.test(key) || IMAGE.test(key);
+const picked = new Set();
+let cleanup = null, openToken = 0;
 
 let client = null, cfg = null, curPrefix = '', nextToken = null, chart = null;
 let listing = { dirs: [], files: [] };
@@ -241,9 +274,9 @@ $('settingsBtn').onclick = () => showSettings($('settings').hidden);
 const baseUrl = () => `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com`;
 const encKey = key => key.split('/').map(encodeURIComponent).join('/');
 
-async function s3(url) {
+async function s3(url, init) {
   let res;
-  try { res = await client.fetch(url); }
+  try { res = await client.fetch(url, init); }
   catch (e) { throw new Error(`요청 실패 (CORS 또는 네트워크 문제일 수 있어요)\n${e.message}`); }
   if (!res.ok) {
     const body = await res.text();
@@ -261,9 +294,87 @@ async function listXml(qs) {
 }
 
 // 서명된 GET URL — <video>/<img>가 헤더 없이 직접 스트리밍
-async function presign(key) {
-  return (await client.sign(`${baseUrl()}/${encKey(key)}`, { aws: { signQuery: true } })).url;
+async function presign(key, downloadName) {
+  const qs = downloadName
+    ? `?response-content-disposition=${encodeURIComponent(`attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`)}` : '';
+  return (await client.sign(`${baseUrl()}/${encKey(key)}${qs}`, { aws: { signQuery: true } })).url;
 }
+
+async function listAll(prefix) {
+  const keys = [];
+  let token = null;
+  do {
+    const qs = new URLSearchParams({ 'list-type': '2', prefix });
+    if (token) qs.set('continuation-token', token);
+    const xml = await listXml(qs);
+    keys.push(...[...xml.querySelectorAll('Contents > Key')].map(n => n.textContent).filter(k => !k.endsWith('/')));
+    token = xml.querySelector('IsTruncated')?.textContent === 'true' ? xml.querySelector('NextContinuationToken')?.textContent : null;
+  } while (token);
+  return keys;
+}
+
+async function readAll(res, total, onProgress) {
+  const reader = res.body.getReader(), parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); got += value.length;
+    onProgress(total ? got / total : 0);
+  }
+  const out = new Uint8Array(got);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+// MCAP 앞부분만 받아서 첫 장면 찾기 (1MB → 3MB → 8MB)
+async function mcapThumb(key) {
+  for (const mb of [1, 3, 8]) {
+    const want = mb * 1024 * 1024;
+    const res = await s3(`${baseUrl()}/${encKey(key)}`, { headers: { Range: `bytes=0-${want - 1}` } });
+    const u8 = new Uint8Array(await res.arrayBuffer());
+    const found = firstFrame(u8);
+    if (found || u8.length < want) return found;
+  }
+  return null;
+}
+
+// --- 선택 다운로드 ---
+function updateSel() {
+  const boxes = [...$('list').querySelectorAll('input.pick')];
+  $('selAll').checked = boxes.length > 0 && boxes.every(b => b.checked);
+  $('dlBtn').disabled = !picked.size;
+  $('dlBtn').textContent = picked.size ? `선택 다운로드 (${picked.size})` : '선택 다운로드';
+}
+
+$('selAll').onchange = e => {
+  $('list').querySelectorAll('input.pick').forEach(b => { b.checked = e.target.checked; e.target.checked ? picked.add(b.dataset.k) : picked.delete(b.dataset.k); });
+  updateSel();
+};
+
+$('dlBtn').onclick = async () => {
+  const btn = $('dlBtn');
+  btn.disabled = true;
+  try {
+    const keys = [];
+    for (const k of picked) k.endsWith('/') ? keys.push(...await listAll(k)) : keys.push(k);
+    if (keys.length > 10 && !confirm(`${keys.length}개 파일을 다운로드할까요?\n브라우저가 '여러 파일 다운로드'를 물어보면 허용해 주세요.`)) return;
+    for (let i = 0; i < keys.length; i++) {
+      btn.textContent = `다운로드 중 ${i + 1}/${keys.length}`;
+      const name = keys[i].slice(curPrefix.length).replaceAll('/', '__');
+      const a = document.createElement('a');
+      a.href = await presign(keys[i], name);
+      a.download = name;
+      document.body.append(a); a.click(); a.remove();
+      await new Promise(r => setTimeout(r, 700));
+    }
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    updateSel();
+  }
+};
 
 async function openPrefix(prefix, append = false) {
   curPrefix = prefix;
@@ -310,17 +421,25 @@ function renderCrumbs() {
 
 function renderList(dirs, files, append) {
   const list = $('list');
-  if (!append) list.innerHTML = '';
+  if (!append) { list.innerHTML = ''; picked.clear(); }
   if (!append && !dirs.length && !files.length) list.innerHTML = '<div class="empty">비어 있음</div>';
+  const pick = k => `<input type="checkbox" class="pick" data-k="${esc(k)}" ${picked.has(k) ? 'checked' : ''}>`;
+  const hookPick = el => {
+    const cb = el.querySelector('input.pick');
+    cb.onclick = e => e.stopPropagation();
+    cb.onchange = () => { cb.checked ? picked.add(cb.dataset.k) : picked.delete(cb.dataset.k); updateSel(); };
+  };
   for (const d of dirs) {
-    const el = div('item', `<span class="name">📁 ${esc(d.slice(curPrefix.length))}</span>`);
+    const el = div('item', `<span class="name">${pick(d)}📁 ${esc(d.slice(curPrefix.length))}</span>`);
     el.onclick = () => openPrefix(d);
+    hookPick(el);
     list.append(el);
   }
   for (const f of files) {
-    const icon = VIDEO.test(f.key) ? '🎬 ' : IMAGE.test(f.key) ? '🖼 ' : '';
-    const el = div('item', `<span class="name">${icon}${esc(f.key.slice(curPrefix.length))}</span>
+    const icon = VIDEO.test(f.key) ? '🎬 ' : IMAGE.test(f.key) ? '🖼 ' : MCAP.test(f.key) ? '📊 ' : '';
+    const el = div('item', `<span class="name">${pick(f.key)}${icon}${esc(f.key.slice(curPrefix.length))}</span>
       <span class="meta">${fmtSize(f.size)} · ${f.modified.slice(0, 10)}</span>`);
+    hookPick(el);
     el.onclick = () => {
       list.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
       el.classList.add('sel');
@@ -329,6 +448,7 @@ function renderList(dirs, files, append) {
     list.append(el);
   }
   $('more').style.display = nextToken ? '' : 'none';
+  updateSel();
 }
 
 // --- file viewer ---
@@ -341,12 +461,33 @@ function fileHead(f) {
 }
 
 function setViewer(html) {
+  cleanup?.();
+  cleanup = null;
   $('viewer').innerHTML = html;
   if ($('back')) $('back').onclick = renderGrid;
 }
 
 async function openFile(f) {
-  const v = $('viewer');
+  const v = $('viewer'), token = ++openToken;
+  if (MCAP.test(f.key)) {
+    if (f.size > MAX_MCAP && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) return;
+    setViewer(fileHead(f) + '<div class="empty" id="mcLoad">불러오는 중…</div>');
+    try {
+      const res = await s3(`${baseUrl()}/${encKey(f.key)}`);
+      const u8 = await readAll(res, f.size, p => {
+        if (token === openToken && $('mcLoad')) $('mcLoad').textContent = `불러오는 중… ${Math.round(p * 100)}% / ${fmtSize(f.size)}`;
+      });
+      if (token !== openToken) return;
+      $('mcLoad').textContent = '해석 중…';
+      await new Promise(r => setTimeout(r, 30));
+      const box = document.createElement('div');
+      $('mcLoad').replaceWith(box);
+      cleanup = renderMcap(box, u8);
+    } catch (e) {
+      if (token === openToken) setViewer(fileHead(f) + `<div class="msg err">${esc(e.message)}</div>`);
+    }
+    return;
+  }
   if (isMedia(f.key)) {
     const isVideo = VIDEO.test(f.key);
     setViewer(fileHead(f) + `<${isVideo ? 'video controls playsinline' : 'img'} class="media"></${isVideo ? 'video' : 'img'}>`);
@@ -356,7 +497,7 @@ async function openFile(f) {
     el.src = await presign(f.key);
     return;
   }
-  v.innerHTML = `<div class="empty">불러오는 중… (${fmtSize(f.size)})</div>`;
+  setViewer(`<div class="empty">불러오는 중… (${fmtSize(f.size)})</div>`);
   if (f.size > MAX_BYTES && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) {
     v.innerHTML = '<div class="empty">취소됨</div>'; return;
   }
@@ -510,12 +651,22 @@ async function firstMedia(prefix) {
   try {
     const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix, 'max-keys': '1000' }));
     const keys = [...xml.querySelectorAll('Contents > Key')].map(n => n.textContent);
-    return keys.find(k => VIDEO.test(k)) || keys.find(k => IMAGE.test(k)) || null;
+    return keys.find(k => VIDEO.test(k)) || keys.find(k => MCAP.test(k)) || keys.find(k => IMAGE.test(k)) || null;
   } catch { return null; }
 }
 
 async function fillThumb(t, key) {
   const th = t.querySelector('.thumb');
+  if (key && MCAP.test(key)) {
+    const found = await mcapThumb(key).catch(() => null);
+    if (!found) { th.classList.add('noimg'); th.textContent = 'MCAP'; return; }
+    const el = document.createElement(found.kind === 'video' ? 'video' : 'img');
+    if (found.kind === 'video') Object.assign(el, { muted: true, playsInline: true, preload: 'auto' });
+    el.src = found.url;
+    th.textContent = '';
+    th.append(el);
+    return;
+  }
   if (!key || !isMedia(key)) {
     th.classList.add('noimg');
     th.textContent = key ? key.split('.').pop().toUpperCase() : '미리보기 없음';
