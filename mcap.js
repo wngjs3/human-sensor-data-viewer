@@ -206,7 +206,7 @@ export function loadSession(u8) {
         pos: msgs.map(m => Float64Array.from(m.d.positionM || [])), quat: msgs.map(m => m.d.quatXyzw || []) });
     } else if (short === 'CompressedVideo') {
       const info = byTopic[topic.replace(/\/[^/]+$/, '/camera_info')]?.msgs[0]?.d;
-      videos.push({ topic, width: info?.width || 1280, height: info?.height || 720, format: msgs[0].d.format,
+      videos.push({ topic, width: info?.width || 1280, height: info?.height || 720, K: info?.K, format: msgs[0].d.format,
         frames: msgs.map(m => ({ t: tsToNs(m.d.timestamp) != null ? (tsToNs(m.d.timestamp) - t0) / 1e9 : m.t, data: m.d.data })) });
     } else if (short === 'CompressedImage') {
       images.push({ topic, frames: msgs.map(m => ({ t: m.t, data: m.d.data, format: m.d.format || 'jpeg' })) });
@@ -223,6 +223,26 @@ export function loadSession(u8) {
 
 // ---------- 손을 rig 좌표로 (Manus 관절 + Vive 트래커 + 녹화에 첨부된 보정값) ----------
 const RIG_FILES = ['hands.json', 'hand_mount.json', 'rig_frame.json'];
+
+// 카메라 위치 (rig → 카메라). MCAP에 없어서 트래커 윗면의 흰 점과 영상을 맞춰 구한 값.
+// rig를 다시 보정하거나 카메라를 옮기면 다시 구해야 함 → rigCreated가 다르면 화면에 경고.
+export const CAMERA_POSES = {
+  10187370: {
+    rigCreated: '2026-10-30T13:54:18+09:00',
+    R: [-0.999785, -0.019598, -0.006843, -0.016534, 0.951131, -0.308345, 0.012552, -0.308165, -0.95125],
+    t: [0.0424, -0.25836, 1.21494],
+    trackerDot: 0.0212, // 흰 점이 트래커 원점에서 -z로 떨어진 거리 (m)
+    timeOffset: 0.01, // 영상 시각 + 이 값(s) = 센서 시각
+  },
+};
+
+// rig 좌표 → 영상 픽셀. K는 camera_info (rectified라 왜곡 없음)
+export function projectToImage(cam, K, x, y, z) {
+  const [a, b, c] = apply(cam.R, x, y, z);
+  const X = a + cam.t[0], Y = b + cam.t[1], Z = c + cam.t[2];
+  return [K[0] * X / Z + K[2], K[4] * Y / Z + K[5]];
+}
+
 
 // 3×3 행렬은 행 우선 배열. 쿼터니언은 입력 순서가 x y z w (json의 wxyz는 호출할 때 바꿔 넣음)
 function quatMat(x, y, z, w) {
@@ -248,7 +268,7 @@ function eulerXYZ([a, b, c]) {
   return matMul(matMul([1, 0, 0, 0, ca, -sa, 0, sa, ca], [cb, 0, sb, 0, 1, 0, -sb, 0, cb]), [cc, -sc, 0, sc, cc, 0, 0, 0, 1]);
 }
 
-function nearest(ts, v) {
+export function nearest(ts, v) {
   let lo = 0, hi = ts.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (ts[mid] < v) lo = mid + 1; else hi = mid; }
   return lo > 0 && v - ts[lo - 1] <= ts[lo] - v ? lo - 1 : lo;
@@ -295,7 +315,7 @@ function rigHands(att, hands, poses) {
     });
     out.push({ side, serial, t: h.t, names: h.joints, parent: h.parent, joints, tracker });
   }
-  return { hands: out, problem: problems.join(' / ') };
+  return { hands: out, problem: problems.join(' / '), created: att['rig_frame.json'].created };
 }
 
 function table(topic, names, ts, rows, layout) {

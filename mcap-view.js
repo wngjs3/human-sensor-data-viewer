@@ -1,5 +1,5 @@
 // MCAP 세션 화면: 영상 + 손 스켈레톤 + 촉각 히트맵 + 트래커 궤적 + 시계열, 하나의 타임라인으로 동기화
-import { loadSession, videoToMp4, indexAt } from './mcap.js';
+import { loadSession, videoToMp4, indexAt, nearest, projectToImage, CAMERA_POSES } from './mcap.js';
 
 const PALETTE = ['#2f6fde', '#e0763a', '#2fa36b', '#c2459a', '#8a63d2', '#c9a227', '#1f9bb3', '#d0463f'];
 const FINGER_COLORS = { thumb: '#e0763a', index: '#2f6fde', middle: '#2fa36b', ring: '#c2459a', pinky: '#8a63d2' };
@@ -71,6 +71,54 @@ export function renderMcap(container, u8) {
     return el;
   };
 
+  // 영상 위에 손 겹치기 (카메라 위치를 아는 경우)
+  function addOverlay(el, box, vid, v) {
+    const cam = CAMERA_POSES[v.topic.match(/\/zed\/([^/]+)\//)?.[1]];
+    if (!cam || !v.K || !s.rig.hands.length) return;
+    const same = s.rig.created === cam.rigCreated;
+    const cv = document.createElement('canvas');
+    cv.className = 'mc-overlay';
+    box.append(cv);
+    const title = el.querySelector('.mc-title');
+    title.insertAdjacentHTML('beforeend', ` <label class="mc-toggle"><input type="checkbox" ${same ? 'checked' : ''}> 손 겹치기</label>`);
+    if (!same) el.insertAdjacentHTML('beforeend', '<div class="msg err">이 녹화는 카메라 위치를 구할 때와 rig 보정이 달라서 손이 어긋날 수 있어요.</div>');
+    const on = title.querySelector('input');
+    let lastT = 0;
+    const redraw = () => {
+      const { ctx, w, hgt } = fit(cv);
+      if (!on.checked) return;
+      // object-fit: contain 으로 실제 영상이 그려진 영역
+      const sc = Math.min(w / v.width, hgt / v.height), ox = (w - v.width * sc) / 2, oy = (hgt - v.height * sc) / 2;
+      const px = (x, y, z) => { const [u, q] = projectToImage(cam, v.K, x, y, z); return [ox + u * sc, oy + q * sc]; };
+      for (const h of s.rig.hands) {
+        const i = nearest(h.t, lastT + cam.timeOffset), j = h.joints[i], tr = h.tracker[i];
+        const at = k => px(j[k * 3], j[k * 3 + 1], j[k * 3 + 2]);
+        ctx.lineCap = 'round'; ctx.lineWidth = 2;
+        h.parent.forEach((par, k) => {
+          if (par < 0) return;
+          const a = at(par), b = at(k);
+          ctx.strokeStyle = fingerColor(h.names[k] || '');
+          ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        });
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+        h.names.forEach((n, k) => {
+          if (!n.endsWith('_tip')) return;
+          const p = at(k);
+          ctx.beginPath(); ctx.arc(p[0], p[1], 3, 0, 7); ctx.stroke();
+        });
+        // 트래커 윗면 흰 점
+        const d = cam.trackerDot, r = tr.rot, m = px(tr.pos[0] - d * r[2], tr.pos[1] - d * r[5], tr.pos[2] - d * r[8]);
+        ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(m[0] - 6, m[1]); ctx.lineTo(m[0] + 6, m[1]); ctx.moveTo(m[0], m[1] - 6); ctx.lineTo(m[0], m[1] + 6); ctx.stroke();
+      }
+    };
+    on.onchange = redraw;
+    views.push({ draw: tt => { lastT = tt; redraw(); } });
+    const ro = new ResizeObserver(redraw);
+    ro.observe(cv);
+    disposers.push(() => ro.disconnect());
+  }
+
   // ---- video ----
   for (const v of s.videos) {
     const el = panel(v.topic, true);
@@ -79,7 +127,11 @@ export function renderMcap(container, u8) {
       disposers.push(() => URL.revokeObjectURL(url));
       const vid = document.createElement('video');
       Object.assign(vid, { src: url, muted: true, playsInline: true, preload: 'auto', className: 'media' });
-      el.append(vid);
+      const box = document.createElement('div');
+      box.className = 'mc-vid';
+      box.append(vid);
+      el.append(box);
+      addOverlay(el, box, vid, v);
       const vt = () => Math.max(0, t - offset);
       views.push({
         clock: () => (vid.paused || vid.ended || vid.seeking ? null : vid.currentTime + offset),
