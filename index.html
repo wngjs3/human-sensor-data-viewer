@@ -10,12 +10,14 @@
     --bg: #f6f7f9; --panel: #ffffff; --soft: #eef1f5; --line: #dde2e8;
     --text: #1d2330; --muted: #6b7380; --accent: #2f6fde; --accent-soft: #e6eefc;
     --danger: #c43c3c; --danger-soft: #fbeaea;
+    --badge-l: 92%; --badge-tl: 30%;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --panel: #1a1e26; --soft: #222833; --line: #2d3440;
       --text: #e4e8ef; --muted: #8d96a5; --accent: #6b9cf0; --accent-soft: #23314a;
       --danger: #e67a7a; --danger-soft: #3a2224;
+      --badge-l: 24%; --badge-tl: 82%;
     }
   }
   * { box-sizing: border-box; }
@@ -25,7 +27,7 @@
   header { padding: 16px 24px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 18px; margin: 0; }
   header .loc { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
-  main { padding: 0 24px 24px; display: grid; gap: 16px; grid-template-columns: 340px 1fr; }
+  main { padding: 0 24px 24px; display: grid; gap: 16px; grid-template-columns: 280px 1fr; align-items: start; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 0 16px 16px; } header { padding: 16px; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
@@ -45,20 +47,75 @@
   .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .msg.err { background: var(--danger-soft); color: var(--danger); }
   .msg.ok { background: var(--accent-soft); color: var(--accent); }
-  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-  .crumbs { font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-bottom: 8px; word-break: break-all; }
-  .crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
-  .list { max-height: 460px; overflow: auto; margin: 0 -8px; }
-  .item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-  .item:hover { background: var(--soft); }
-  .item.sel { background: var(--accent-soft); }
-  .item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; position: sticky; top: 16px; }
+  @media (max-width: 900px) { .side { position: static; } }
   .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
   details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
   pre { background: var(--soft); border-radius: 8px; padding: 10px; font-size: 11px; overflow: auto; margin: 8px 0 0; }
-  .viewer-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-  .viewer-head .file { font-family: ui-monospace, Menlo, monospace; font-size: 13px; word-break: break-all; }
+
+  /* 폴더 트리 */
+  .tree { max-height: 60vh; overflow: auto; margin: 0 -8px; font-size: 13px; }
+  @media (max-width: 900px) { .tree { max-height: 30vh; } }
+  .tnode { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .tnode:hover { background: var(--soft); }
+  .tnode.cur { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tnode .tw { width: 14px; flex: 0 0 14px; color: var(--muted); text-align: center; font-size: 11px; }
+  .tnode .tname { overflow: hidden; text-overflow: ellipsis; }
+
+  /* 툴바 */
+  .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .nav { width: 34px; height: 34px; padding: 0; background: var(--soft); color: var(--text); font-weight: 500; flex: 0 0 auto; }
+  .nav:hover:not(:disabled) { background: var(--line); }
+  .path { display: flex; flex-wrap: wrap; align-items: center; gap: 0; flex: 1; min-width: 0;
+    background: var(--soft); border-radius: 8px; padding: 2px 4px; font-size: 13px; min-height: 34px; }
+  .path button { background: none; color: var(--accent); padding: 4px 6px; font-weight: 500; border-radius: 6px; }
+  .path button:hover { background: var(--line); }
+  .path .cur { color: var(--text); font-weight: 600; padding: 4px 6px; }
+  .path .sep { color: var(--muted); }
+  .seg { display: flex; gap: 2px; background: var(--soft); border-radius: 8px; padding: 2px; flex: 0 0 auto; }
+  .seg button { background: transparent; color: var(--muted); padding: 6px 10px; font-size: 12px; font-weight: 500; }
+  .seg button.on { background: var(--panel); color: var(--text); }
+  .toolbar2 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .toolbar2 .check { margin: 0; }
+  .toolbar2 button { padding: 6px 12px; font-size: 12px; }
+  .users { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1; min-width: 0; }
+  .users .lbl { font-size: 12px; color: var(--muted); margin-right: 2px; }
+  .ufilter { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--text); }
+  .ufilter.on { background: var(--text); color: var(--panel); }
+  .ubadge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap;
+    background: hsl(var(--h) 65% var(--badge-l)); color: hsl(var(--h) 60% var(--badge-tl)); vertical-align: 1px; }
+  .ufilter .ubadge { margin-right: 2px; }
+  .muted { color: var(--muted); }
+
+  /* 목록 */
+  .files-wrap { overflow-x: auto; }
+  table.files { font-size: 13px; }
+  table.files th { position: static; background: none; color: var(--muted); font-size: 12px; font-weight: 500; border-bottom: 1px solid var(--line); }
+  table.files td { padding: 7px 10px; }
+  table.files tbody tr { cursor: pointer; }
+  table.files tbody tr:hover { background: var(--soft); }
+  table.files .ck { width: 28px; padding-right: 0; }
+  table.files .nm { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  table.files .num { text-align: right; color: var(--muted); }
+  table.files .dt { color: var(--muted); }
+
+  /* 이미지로 보기 */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .tile { position: relative; cursor: pointer; border-radius: 10px; overflow: hidden; background: var(--soft); }
+  .tile:hover { outline: 2px solid var(--accent); }
+  .tile .pick { position: absolute; top: 8px; left: 8px; z-index: 1; width: 16px; height: 16px; }
+  .tile .ubadge { position: absolute; top: 6px; right: 6px; z-index: 1; font-size: 12px; padding: 2px 9px; }
+  .thumb { aspect-ratio: 16 / 9; background: #000; display: flex; align-items: center; justify-content: center;
+    color: #8d96a5; font-size: 12px; font-weight: 600; }
+  .thumb.noimg { background: var(--line); color: var(--muted); }
+  .thumb video, .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cap { padding: 6px 8px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap small { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 파일 보기 */
+  .viewer-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .viewer-head .file { font-family: ui-monospace, Menlo, monospace; font-size: 13px; word-break: break-all; flex: 0 1 auto; }
+  .viewer-head .meta { color: var(--muted); font-size: 12px; }
   .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .stat { background: var(--soft); border-radius: 8px; padding: 8px 12px; }
   .stat b { display: block; font-size: 16px; }
@@ -73,23 +130,9 @@
   th, td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
   th { position: sticky; top: 0; background: var(--soft); font-weight: 600; }
   .raw { max-height: 500px; }
-  .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-  .card-head h2 { margin: 0; }
-  .seg { display: flex; gap: 2px; background: var(--soft); border-radius: 8px; padding: 2px; }
-  .seg button { background: transparent; color: var(--muted); padding: 4px 10px; font-size: 12px; font-weight: 500; }
-  .seg button.on { background: var(--panel); color: var(--text); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-  .tile { cursor: pointer; border-radius: 10px; overflow: hidden; background: var(--soft); }
-  .tile:hover { outline: 2px solid var(--accent); }
-  .thumb { aspect-ratio: 16 / 9; background: #000; display: flex; align-items: center; justify-content: center;
-    color: #8d96a5; font-size: 12px; font-weight: 600; }
-  .thumb.noimg { background: var(--line); color: var(--muted); }
-  .thumb video, .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .cap { padding: 6px 8px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cap small { display: block; color: var(--muted); font-size: 11px; }
-  .selbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  .selbar button { padding: 5px 10px; font-size: 12px; }
-  .item input.pick { margin: 0 6px 0 0; vertical-align: -2px; }
+  .media { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
+
+  /* MCAP */
   .mc-panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
   .mc-panel { background: var(--soft); border-radius: 10px; padding: 8px; min-width: 0; }
   .mc-panel.wide { grid-column: 1 / -1; }
@@ -111,7 +154,6 @@
   .mc-add { width: auto; padding: 3px 8px; font-size: 12px; }
   .mc-chart-wrap { position: relative; height: 150px; }
   .mc-cursor { position: absolute; top: 0; bottom: 20px; width: 1.5px; background: var(--danger); pointer-events: none; }
-  .media { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
 </style>
 </head>
 <body>
@@ -152,28 +194,32 @@
     </section>
 
     <section class="card">
-      <div class="card-head">
-        <h2>파일</h2>
-        <div class="seg" id="viewSeg"><button data-v="list">목록</button><button data-v="grid">이미지로 보기</button></div>
-      </div>
-      <div class="crumbs" id="crumbs"></div>
-      <div class="selbar">
-        <label class="check" style="margin:0"><input type="checkbox" id="selAll"> 전체 선택</label>
-        <button class="ghost" id="dlBtn" disabled>선택 다운로드</button>
-      </div>
-      <div class="list" id="list"><div class="empty">키를 입력하고 연결하세요</div></div>
-      <button class="ghost" id="more" style="display:none;width:100%;margin-top:8px">더 보기</button>
+      <h2>폴더</h2>
+      <div class="tree" id="tree"><div class="empty">연결 전</div></div>
     </section>
   </div>
 
-  <section class="card" id="viewer">
-    <div class="empty">왼쪽에서 파일을 선택하세요</div>
+  <section class="card">
+    <div class="toolbar">
+      <button class="nav" id="navBack" title="뒤로">←</button>
+      <button class="nav" id="navFwd" title="앞으로">→</button>
+      <button class="nav" id="navUp" title="상위 폴더">↑</button>
+      <div class="path" id="path"></div>
+      <button class="nav" id="refresh" title="새로고침">⟳</button>
+      <div class="seg" id="viewSeg"><button data-v="list">목록</button><button data-v="grid">이미지로 보기</button></div>
+    </div>
+    <div class="toolbar2" id="toolbar2">
+      <div class="users" id="users"></div>
+      <label class="check"><input type="checkbox" id="selAll"> 전체 선택</label>
+      <button class="ghost" id="dlBtn" disabled>선택 다운로드</button>
+    </div>
+    <div id="content"><div class="empty">연결 설정에서 키를 입력하세요</div></div>
   </section>
 </main>
 
 <script type="module">
 import { AwsClient } from 'https://cdn.jsdelivr.net/npm/aws4fetch@1.0.20/dist/aws4fetch.esm.mjs';
-import { firstFrame } from './mcap.js';
+import { firstFrame, sessionMeta } from './mcap.js';
 import { renderMcap } from './mcap-view.js';
 
 const $ = id => document.getElementById(id);
@@ -182,25 +228,19 @@ const MAX_ROWS_TABLE = 200, MAX_POINTS = 4000, MAX_BYTES = 50 * 1024 * 1024;
 
 const VIDEO = /\.(mp4|webm|mov|m4v|mkv|ogv)$/i, IMAGE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
 const MCAP = /\.mcap$/i, MAX_MCAP = 1024 ** 3;
+// 폴더 이름으로 사용자 구분 (user1, user_02, subject3, P04 …)
+const USER_RE = /^(user|유저|subject|sub|participant|p|u)[-_ ]?\d+$/i;
 const isMedia = key => VIDEO.test(key) || IMAGE.test(key);
-const picked = new Set();
-let cleanup = null, openToken = 0;
 
-let client = null, cfg = null, curPrefix = '', nextToken = null, chart = null;
+let client = null, cfg = null, curPrefix = '', nextToken = null, chart = null, listed = false;
 let listing = { dirs: [], files: [] };
+let cleanup = null, openToken = 0, openedFile = null, userFilter = null;
+const picked = new Set();
+const tree = new Map();      // prefix → { open, children }
+const metaCache = new Map(); // key → Promise<session meta | null>
+const metaDone = new Map();  // key → session meta | null
 let view = 'list';
 try { view = localStorage.getItem('s3viewer.view') || 'list'; } catch {}
-
-function setView(v) {
-  view = v;
-  try { localStorage.setItem('s3viewer.view', v); } catch {}
-  $('viewSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  if (!client) return;
-  if (v === 'grid') renderGrid();
-  else $('viewer').innerHTML = '<div class="empty">왼쪽에서 파일을 선택하세요</div>';
-}
-$('viewSeg').querySelectorAll('button').forEach(b => b.onclick = () => setView(b.dataset.v));
-setView(view);
 
 // --- settings ---
 let saved = null;
@@ -259,7 +299,8 @@ $('connect').onclick = async () => {
     service: 's3', region: cfg.region,
   });
   showMsg('connMsg', '');
-  if (await openPrefix(cfg.prefix)) showSettings(false);
+  tree.clear(); listed = false;
+  if (await route()) showSettings(false);
 };
 
 // 연결된 뒤에는 설정 카드를 숨기고 ⚙ 버튼으로만 열기
@@ -293,7 +334,7 @@ async function listXml(qs) {
   return new DOMParser().parseFromString(text, 'application/xml');
 }
 
-// 서명된 GET URL — <video>/<img>가 헤더 없이 직접 스트리밍
+// 서명된 GET URL — <video>/<img>가 헤더 없이 직접 스트리밍, downloadName이면 첨부파일로
 async function presign(key, downloadName) {
   const qs = downloadName
     ? `?response-content-disposition=${encodeURIComponent(`attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`)}` : '';
@@ -328,28 +369,362 @@ async function readAll(res, total, onProgress) {
   return out;
 }
 
+// 동시 요청 수 제한
+const limit = (() => {
+  let active = 0;
+  const q = [];
+  const next = () => {
+    if (active >= 6 || !q.length) return;
+    active++;
+    const [fn, ok, fail] = q.shift();
+    fn().then(ok, fail).finally(() => { active--; next(); });
+  };
+  return fn => new Promise((ok, fail) => { q.push([fn, ok, fail]); next(); });
+})();
+
+const rangeGet = async (key, bytes) =>
+  new Uint8Array(await (await s3(`${baseUrl()}/${encKey(key)}`, { headers: { Range: `bytes=0-${bytes - 1}` } })).arrayBuffer());
+
+// 썸네일/대표 파일 결과 캐시 (필터·보기 전환 때 다시 받지 않게)
+const memo = new Map();
+const cached = (k, fn) => { if (!memo.has(k)) memo.set(k, fn().catch(() => null)); return memo.get(k); };
+
 // MCAP 앞부분만 받아서 첫 장면 찾기 (1MB → 3MB → 8MB)
-async function mcapThumb(key) {
+const mcapThumb = key => cached('thumb:' + key, () => mcapThumbLoad(key));
+async function mcapThumbLoad(key) {
   for (const mb of [1, 3, 8]) {
-    const want = mb * 1024 * 1024;
-    const res = await s3(`${baseUrl()}/${encKey(key)}`, { headers: { Range: `bytes=0-${want - 1}` } });
-    const u8 = new Uint8Array(await res.arrayBuffer());
+    const want = mb * 1024 * 1024, u8 = await limit(() => rangeGet(key, want));
+    if (!metaDone.has(key)) setMeta(key, sessionMeta(u8));
     const found = firstFrame(u8);
     if (found || u8.length < want) return found;
   }
   return null;
 }
 
+// --- 사용자 / 작업 ---
+const rel = p => p.slice(cfg.prefix.length);
+const userOfPath = p => rel(p).split('/').find(s => USER_RE.test(s)) || '';
+const userOf = key => key.endsWith('/') ? userOfPath(key) : (metaDone.get(key)?.user_id || userOfPath(key));
+const taskOf = key => metaDone.get(key)?.task || key.match(/Z_([^/]+)\.mcap$/i)?.[1] || '';
+
+function userBadge(u) {
+  if (!u) return '';
+  // 이름 해시 → 황금각으로 흩어서 user1/user2처럼 비슷한 이름도 색이 확 다르게
+  let h = 2166136261;
+  for (const c of u) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return `<span class="ubadge" style="--h:${Math.round(((h >>> 0) * 137.508) % 360)}">${esc(u)}</span>`;
+}
+
+function setMeta(key, m) {
+  metaDone.set(key, m);
+  if (!metaCache.has(key)) metaCache.set(key, Promise.resolve(m));
+  document.querySelectorAll(`[data-mk="${CSS.escape(key)}"]`).forEach(el => {
+    if (el.dataset.f === 'user') el.innerHTML = userBadge(userOf(key)) || '<span class="muted">—</span>';
+    if (el.dataset.f === 'task') el.textContent = taskOf(key);
+    if (el.dataset.f === 'badge') el.innerHTML = userBadge(userOf(key));
+  });
+  scheduleUsers();
+}
+
+// MCAP 맨 앞 16KB만 읽어 session 메타데이터(user_id, task)
+function loadMeta(key) {
+  if (!metaCache.has(key)) {
+    metaCache.set(key, limit(() => rangeGet(key, 16384)).then(sessionMeta).catch(() => null)
+      .then(m => { if (!metaDone.has(key)) setMeta(key, m); return m; }));
+  }
+  return metaCache.get(key);
+}
+
+let usersTimer = 0;
+const scheduleUsers = () => { clearTimeout(usersTimer); usersTimer = setTimeout(renderUsers, 50); };
+
+function items() {
+  const all = [...listing.dirs.map(k => ({ key: k, dir: true })), ...listing.files];
+  if (userFilter == null) return all;
+  return all.filter(it => {
+    const u = userOf(it.key);
+    if (it.dir && !u) return true; // 사용자 표시 없는 폴더는 항상 보임
+    return userFilter === '' ? !u : u === userFilter;
+  });
+}
+
+function renderUsers() {
+  const counts = new Map();
+  let none = 0;
+  for (const it of [...listing.dirs.map(k => ({ key: k, dir: true })), ...listing.files]) {
+    const u = userOf(it.key);
+    if (u) counts.set(u, (counts.get(u) || 0) + 1);
+    else if (!it.dir) none++;
+  }
+  if (!counts.size) { $('users').innerHTML = ''; return; }
+  const btn = (val, label, n) => `<button class="ufilter ${userFilter === val ? 'on' : ''}" data-u="${val == null ? '*' : esc(val)}">${label} <span class="muted">${n}</span></button>`;
+  $('users').innerHTML = '<span class="lbl">사용자</span>'
+    + btn(null, '전체', listing.dirs.length + listing.files.length)
+    + [...counts].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([u, n]) => btn(u, userBadge(u), n)).join('')
+    + (none ? btn('', '미지정', none) : '');
+  $('users').querySelectorAll('.ufilter').forEach(b => b.onclick = () => {
+    userFilter = b.dataset.u === '*' ? null : b.dataset.u;
+    renderUsers();
+    renderContent();
+  });
+}
+
+// --- 이동 (URL #/경로 = 현재 위치 → 브라우저 뒤로/앞으로, 링크 공유) ---
+function go(path) {
+  const h = '#/' + encodeURI(rel(path));
+  if (location.hash === h) route(); else location.hash = h;
+}
+window.addEventListener('hashchange', () => { if (client) route(); });
+$('navBack').onclick = () => history.back();
+$('navFwd').onclick = () => history.forward();
+$('navUp').onclick = () => {
+  if (openedFile) return go(curPrefix);
+  const r = rel(curPrefix).split('/').filter(Boolean);
+  go(cfg.prefix + (r.length > 1 ? r.slice(0, -1).join('/') + '/' : ''));
+};
+$('refresh').onclick = () => { listed = false; memo.clear(); route(); };
+
+async function route() {
+  let r = '';
+  try { r = decodeURI(location.hash.replace(/^#\/?/, '')); } catch {}
+  const path = cfg.prefix + r;
+  if (!r || path.endsWith('/')) {
+    openedFile = null;
+    if (path !== curPrefix || !listed) return openPrefix(path);
+    renderContent();
+    return true;
+  }
+  const parent = path.slice(0, path.lastIndexOf('/') + 1);
+  if (parent !== curPrefix || !listed) if (!await openPrefix(parent, false, true)) return false;
+  openFile(listing.files.find(x => x.key === path) || { key: path, size: 0, modified: '' });
+  return true;
+}
+
+async function openPrefix(prefix, append = false, quiet = false) {
+  if (!append) {
+    curPrefix = prefix; nextToken = null; userFilter = null; picked.clear(); listed = false;
+    if (!quiet) { openedFile = null; setContent('<div class="empty">불러오는 중…</div>'); }
+    renderPath();
+  }
+  const qs = new URLSearchParams({ 'list-type': '2', prefix, delimiter: '/', 'max-keys': '500' });
+  if (append && nextToken) qs.set('continuation-token', nextToken);
+  try {
+    const xml = await listXml(qs);
+    const dirs = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(n => n.textContent);
+    const files = [...xml.querySelectorAll('Contents')].map(n => ({
+      key: n.querySelector('Key').textContent,
+      size: +n.querySelector('Size').textContent,
+      modified: n.querySelector('LastModified').textContent,
+    })).filter(f => f.key !== prefix);
+    nextToken = xml.querySelector('IsTruncated')?.textContent === 'true'
+      ? xml.querySelector('NextContinuationToken')?.textContent : null;
+    if (append) { listing.dirs.push(...dirs); listing.files.push(...files); }
+    else listing = { dirs, files };
+    listed = true;
+    files.filter(f => MCAP.test(f.key)).forEach(f => loadMeta(f.key));
+    await syncTree(prefix, append ? null : dirs);
+    renderUsers();
+    if (!quiet) renderContent();
+    showMsg('connMsg', '연결됨', 'ok');
+    return true;
+  } catch (e) {
+    setContent(`<div class="msg err">${esc(e.message)}</div>`);
+    showMsg('connMsg', e.message, 'err');
+    showSettings(true);
+    return false;
+  }
+}
+
+function renderPath() {
+  $('loc').textContent = `s3://${cfg.bucket}/${curPrefix}${openedFile ? openedFile.key.slice(curPrefix.length) : ''}`;
+  const segs = rel(curPrefix).split('/').filter(Boolean);
+  const rootName = cfg.prefix.split('/').filter(Boolean).pop() || cfg.bucket;
+  const parts = [{ name: `🏠 ${rootName}`, p: cfg.prefix }];
+  segs.forEach((s, i) => parts.push({ name: s, p: cfg.prefix + segs.slice(0, i + 1).join('/') + '/' }));
+  const last = openedFile ? null : parts.pop();
+  $('path').innerHTML = parts.map(x => `<button data-p="${esc(x.p)}">${esc(x.name)}</button><span class="sep">/</span>`).join('')
+    + (last ? `<span class="cur">${esc(last.name)}</span>` : `<span class="cur">${esc(openedFile.key.split('/').pop())}</span>`);
+  $('path').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.p));
+  $('navUp').disabled = !openedFile && curPrefix === cfg.prefix;
+  $('toolbar2').hidden = !!openedFile;
+}
+
+// --- 폴더 트리 ---
+async function treeKids(p) {
+  if (!tree.has(p)) tree.set(p, { open: false, children: null });
+  const n = tree.get(p);
+  if (!n.children) {
+    const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix: p, delimiter: '/', 'max-keys': '1000' }));
+    n.children = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(x => x.textContent);
+  }
+  return n;
+}
+
+// 현재 폴더까지 펼치고 그 하위 폴더 목록 갱신
+async function syncTree(prefix, dirs) {
+  const segs = rel(prefix).split('/').filter(Boolean);
+  for (let i = 0; i < segs.length; i++) {
+    const a = cfg.prefix + segs.slice(0, i).join('/') + (i ? '/' : '');
+    try { (await treeKids(a)).open = true; } catch {}
+  }
+  if (dirs) tree.set(prefix, { open: true, children: dirs });
+  renderTree();
+}
+
+function renderTree() {
+  const out = [];
+  const walk = (p, depth) => {
+    const n = tree.get(p);
+    const name = p === cfg.prefix ? `🏠 ${cfg.prefix.split('/').filter(Boolean).pop() || cfg.bucket}` : `📁 ${p.slice(0, -1).split('/').pop()}`;
+    const leaf = n?.children && !n.children.length;
+    out.push(`<div class="tnode ${p === curPrefix ? 'cur' : ''}" data-p="${esc(p)}" style="padding-left:${8 + depth * 14}px">
+      <span class="tw">${leaf ? '' : n?.open ? '▾' : '▸'}</span><span class="tname">${esc(name)}</span>${userBadge(userOfPath(p))}</div>`);
+    if (n?.open && n.children) n.children.forEach(c => walk(c, depth + 1));
+  };
+  walk(cfg.prefix, 0);
+  $('tree').innerHTML = out.join('');
+  $('tree').querySelectorAll('.tnode').forEach(el => el.onclick = async e => {
+    const p = el.dataset.p;
+    if (e.target.classList.contains('tw')) {
+      try { const n = await treeKids(p); n.open = !n.open; } catch {}
+      renderTree();
+    } else go(p);
+  });
+  $('tree').querySelector('.cur')?.scrollIntoView({ block: 'nearest' });
+}
+
+// --- 보기 전환 ---
+function setView(v) {
+  view = v;
+  try { localStorage.setItem('s3viewer.view', v); } catch {}
+  $('viewSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  if (!client || !listed) return;
+  if (openedFile) go(curPrefix); else renderContent();
+}
+$('viewSeg').querySelectorAll('button').forEach(b => b.onclick = () => setView(b.dataset.v));
+setView(view);
+
+function setContent(html) {
+  cleanup?.();
+  cleanup = null;
+  $('content').innerHTML = html;
+  if ($('back')) $('back').onclick = () => go(curPrefix);
+}
+
+function renderContent() {
+  openedFile = null;
+  renderPath();
+  const list = items();
+  if (!list.length) setContent(`<div class="empty">${listing.dirs.length + listing.files.length ? '이 사용자의 항목이 없어요' : '비어 있음'}</div>`);
+  else if (view === 'grid') renderGrid(list);
+  else renderTable(list);
+  if (nextToken) {
+    const more = div('', '<button class="ghost" style="width:100%;margin-top:12px">더 보기</button>');
+    more.firstChild.onclick = () => openPrefix(curPrefix, true);
+    $('content').append(more);
+  }
+  hookPicks();
+}
+
+const fileIcon = k => VIDEO.test(k) ? '🎬' : IMAGE.test(k) ? '🖼' : MCAP.test(k) ? '📊' : '📄';
+const pickBox = k => `<input type="checkbox" class="pick" data-k="${esc(k)}" ${picked.has(k) ? 'checked' : ''}>`;
+const fmtDate = s => s ? s.replace('T', ' ').slice(0, 16) : '';
+
+function renderTable(list) {
+  const name = k => k.slice(curPrefix.length);
+  const userCell = k => `<td data-mk="${esc(k)}" data-f="user">${userBadge(userOf(k)) || (MCAP.test(k) && !metaDone.has(k) ? '<span class="muted">…</span>' : '<span class="muted">—</span>')}</td>`;
+  setContent(`<div class="files-wrap"><table class="files">
+    <thead><tr><th class="ck"></th><th>이름</th><th>사용자</th><th>작업</th><th class="num">크기</th><th>수정일</th></tr></thead>
+    <tbody>${list.map(it => it.dir
+      ? `<tr data-open="${esc(it.key)}"><td class="ck">${pickBox(it.key)}</td><td class="nm">📁 ${esc(name(it.key))}</td>${userCell(it.key)}<td></td><td class="num">—</td><td></td></tr>`
+      : `<tr data-open="${esc(it.key)}"><td class="ck">${pickBox(it.key)}</td><td class="nm" title="${esc(name(it.key))}">${fileIcon(it.key)} ${esc(name(it.key))}</td>
+          ${userCell(it.key)}<td data-mk="${esc(it.key)}" data-f="task">${esc(taskOf(it.key))}</td>
+          <td class="num">${fmtSize(it.size)}</td><td class="dt">${fmtDate(it.modified)}</td></tr>`).join('')}
+    </tbody></table></div>`);
+  $('content').querySelectorAll('tr[data-open]').forEach(tr => tr.onclick = () => go(tr.dataset.open));
+}
+
+// --- 이미지로 보기: 영상 첫 프레임 / 이미지 / MCAP 첫 장면 ---
+function renderGrid(list) {
+  setContent('<div class="grid" id="grid"></div>');
+  const grid = $('grid');
+  // 화면에 보이는 타일만 불러옴
+  const io = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting) { io.unobserve(e.target); e.target.load(); }
+  }), { rootMargin: '200px' });
+  for (const it of list) {
+    const n = it.key.slice(curPrefix.length);
+    const sub = it.dir ? '폴더' : [taskOf(it.key), fmtSize(it.size), fmtDate(it.modified).slice(0, 10)].filter(Boolean).join(' · ');
+    const t = div('tile', `${pickBox(it.key)}<span data-mk="${esc(it.key)}" data-f="badge">${userBadge(userOf(it.key))}</span>
+      <div class="thumb">…</div>
+      <div class="cap" title="${esc(n)}">${it.dir ? '📁 ' : ''}${esc(n)}<small>${esc(sub)}</small></div>`);
+    t.onclick = () => go(it.key);
+    t.load = it.dir ? async () => fillThumb(t, await firstMedia(it.key)) : () => fillThumb(t, it.key);
+    grid.append(t);
+    io.observe(t);
+  }
+}
+
+// 폴더 안 첫 영상(없으면 MCAP, 이미지)을 대표 장면으로
+const firstMedia = prefix => cached('first:' + prefix, async () => {
+  const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix, 'max-keys': '1000' }));
+  const keys = [...xml.querySelectorAll('Contents > Key')].map(n => n.textContent);
+  return keys.find(k => VIDEO.test(k)) || keys.find(k => MCAP.test(k)) || keys.find(k => IMAGE.test(k)) || null;
+});
+
+async function fillThumb(t, key) {
+  const th = t.querySelector('.thumb');
+  if (key && MCAP.test(key)) {
+    const found = await mcapThumb(key).catch(() => null);
+    if (!found) { th.classList.add('noimg'); th.textContent = 'MCAP'; return; }
+    const el = document.createElement(found.kind === 'video' ? 'video' : 'img');
+    if (found.kind === 'video') Object.assign(el, { muted: true, playsInline: true, preload: 'auto' });
+    el.src = found.url;
+    th.textContent = '';
+    th.append(el);
+    return;
+  }
+  if (!key || !isMedia(key)) {
+    th.classList.add('noimg');
+    th.textContent = key ? key.split('.').pop().toUpperCase() : '미리보기 없음';
+    return;
+  }
+  const url = await presign(key);
+  th.textContent = '';
+  if (IMAGE.test(key)) {
+    const img = document.createElement('img');
+    img.src = url;
+    th.append(img);
+    return;
+  }
+  const vid = document.createElement('video');
+  Object.assign(vid, { muted: true, playsInline: true, preload: 'metadata', loop: true });
+  vid.src = url + '#t=0.1';
+  vid.onerror = () => { th.classList.add('noimg'); th.textContent = '재생 불가'; };
+  th.append(vid);
+  // 마우스 올리면 미리 재생
+  t.onmouseenter = () => vid.play().catch(() => {});
+  t.onmouseleave = () => { vid.pause(); vid.currentTime = 0.1; };
+}
+
 // --- 선택 다운로드 ---
+function hookPicks() {
+  $('content').querySelectorAll('input.pick').forEach(cb => {
+    cb.onclick = e => e.stopPropagation();
+    cb.onchange = () => { cb.checked ? picked.add(cb.dataset.k) : picked.delete(cb.dataset.k); updateSel(); };
+  });
+  updateSel();
+}
+
 function updateSel() {
-  const boxes = [...$('list').querySelectorAll('input.pick')];
+  const boxes = [...$('content').querySelectorAll('input.pick')];
   $('selAll').checked = boxes.length > 0 && boxes.every(b => b.checked);
   $('dlBtn').disabled = !picked.size;
   $('dlBtn').textContent = picked.size ? `선택 다운로드 (${picked.size})` : '선택 다운로드';
 }
 
 $('selAll').onchange = e => {
-  $('list').querySelectorAll('input.pick').forEach(b => { b.checked = e.target.checked; e.target.checked ? picked.add(b.dataset.k) : picked.delete(b.dataset.k); });
+  $('content').querySelectorAll('input.pick').forEach(b => { b.checked = e.target.checked; e.target.checked ? picked.add(b.dataset.k) : picked.delete(b.dataset.k); });
   updateSel();
 };
 
@@ -376,106 +751,29 @@ $('dlBtn').onclick = async () => {
   }
 };
 
-async function openPrefix(prefix, append = false) {
-  curPrefix = prefix;
-  renderCrumbs();
-  if (!append) { nextToken = null; $('list').innerHTML = '<div class="empty">불러오는 중…</div>'; }
-  const qs = new URLSearchParams({ 'list-type': '2', prefix, delimiter: '/', 'max-keys': '500' });
-  if (append && nextToken) qs.set('continuation-token', nextToken);
-  try {
-    const xml = await listXml(qs);
-    const dirs = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(n => n.textContent);
-    const files = [...xml.querySelectorAll('Contents')].map(n => ({
-      key: n.querySelector('Key').textContent,
-      size: +n.querySelector('Size').textContent,
-      modified: n.querySelector('LastModified').textContent,
-    })).filter(f => f.key !== prefix);
-    nextToken = xml.querySelector('IsTruncated')?.textContent === 'true'
-      ? xml.querySelector('NextContinuationToken')?.textContent : null;
-    if (append) { listing.dirs.push(...dirs); listing.files.push(...files); }
-    else listing = { dirs, files };
-    renderList(dirs, files, append);
-    if (view === 'grid') renderGrid();
-    if (!append) showMsg('connMsg', '연결됨', 'ok');
-    return true;
-  } catch (e) {
-    $('list').innerHTML = '<div class="empty">목록을 불러오지 못했습니다</div>';
-    showMsg('connMsg', e.message, 'err');
-    showSettings(true);
-    return false;
-  }
-}
-
-$('more').onclick = () => openPrefix(curPrefix, true);
-
-function renderCrumbs() {
-  $('loc').textContent = `s3://${cfg.bucket}/${curPrefix}`;
-  const root = cfg.prefix;
-  const rest = curPrefix.slice(root.length).split('/').filter(Boolean);
-  const parts = [`<a data-p="${esc(root)}">${esc(root || '/')}</a>`];
-  let acc = root;
-  for (const seg of rest) { acc += seg + '/'; parts.push(`<a data-p="${esc(acc)}">${esc(seg)}/</a>`); }
-  $('crumbs').innerHTML = parts.join(' ');
-  $('crumbs').querySelectorAll('a').forEach(a => a.onclick = () => openPrefix(a.dataset.p));
-}
-
-function renderList(dirs, files, append) {
-  const list = $('list');
-  if (!append) { list.innerHTML = ''; picked.clear(); }
-  if (!append && !dirs.length && !files.length) list.innerHTML = '<div class="empty">비어 있음</div>';
-  const pick = k => `<input type="checkbox" class="pick" data-k="${esc(k)}" ${picked.has(k) ? 'checked' : ''}>`;
-  const hookPick = el => {
-    const cb = el.querySelector('input.pick');
-    cb.onclick = e => e.stopPropagation();
-    cb.onchange = () => { cb.checked ? picked.add(cb.dataset.k) : picked.delete(cb.dataset.k); updateSel(); };
-  };
-  for (const d of dirs) {
-    const el = div('item', `<span class="name">${pick(d)}📁 ${esc(d.slice(curPrefix.length))}</span>`);
-    el.onclick = () => openPrefix(d);
-    hookPick(el);
-    list.append(el);
-  }
-  for (const f of files) {
-    const icon = VIDEO.test(f.key) ? '🎬 ' : IMAGE.test(f.key) ? '🖼 ' : MCAP.test(f.key) ? '📊 ' : '';
-    const el = div('item', `<span class="name">${pick(f.key)}${icon}${esc(f.key.slice(curPrefix.length))}</span>
-      <span class="meta">${fmtSize(f.size)} · ${f.modified.slice(0, 10)}</span>`);
-    hookPick(el);
-    el.onclick = () => {
-      list.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
-      el.classList.add('sel');
-      openFile(f);
-    };
-    list.append(el);
-  }
-  $('more').style.display = nextToken ? '' : 'none';
-  updateSel();
-}
-
-// --- file viewer ---
+// --- 파일 보기 ---
 function fileHead(f) {
   return `<div class="viewer-head">
-    <span class="row" style="flex:1;min-width:0">
-      ${view === 'grid' ? '<button class="ghost" id="back" style="flex:0 0 auto">← 이미지 목록</button>' : ''}
-      <span class="file">${esc(f.key.split('/').pop())}</span></span>
-    <span class="meta" style="color:var(--muted);font-size:12px">${fmtSize(f.size)} · ${f.modified.replace('T', ' ').slice(0, 19)}</span></div>`;
-}
-
-function setViewer(html) {
-  cleanup?.();
-  cleanup = null;
-  $('viewer').innerHTML = html;
-  if ($('back')) $('back').onclick = renderGrid;
+    <span class="row" style="flex:1;min-width:0;flex-wrap:wrap">
+      <button class="ghost" id="back" style="flex:0 0 auto">← 폴더로</button>
+      <span class="file">${esc(f.key.split('/').pop())}</span>
+      <span data-mk="${esc(f.key)}" data-f="badge" style="flex:0 0 auto">${userBadge(userOf(f.key))}</span></span>
+    <span class="meta">${f.size ? fmtSize(f.size) + ' · ' : ''}${fmtDate(f.modified)}</span></div>`;
 }
 
 async function openFile(f) {
-  const v = $('viewer'), token = ++openToken;
+  openedFile = f;
+  renderPath();
+  if (MCAP.test(f.key)) loadMeta(f.key);
+  const token = ++openToken;
   if (MCAP.test(f.key)) {
-    if (f.size > MAX_MCAP && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) return;
-    setViewer(fileHead(f) + '<div class="empty" id="mcLoad">불러오는 중…</div>');
+    if (f.size > MAX_MCAP && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) return go(curPrefix);
+    setContent(fileHead(f) + '<div class="empty" id="mcLoad">불러오는 중…</div>');
     try {
       const res = await s3(`${baseUrl()}/${encKey(f.key)}`);
-      const u8 = await readAll(res, f.size, p => {
-        if (token === openToken && $('mcLoad')) $('mcLoad').textContent = `불러오는 중… ${Math.round(p * 100)}% / ${fmtSize(f.size)}`;
+      const total = f.size || +res.headers.get('content-length') || 0;
+      const u8 = await readAll(res, total, p => {
+        if (token === openToken && $('mcLoad')) $('mcLoad').textContent = `불러오는 중… ${Math.round(p * 100)}% / ${fmtSize(total)}`;
       });
       if (token !== openToken) return;
       $('mcLoad').textContent = '해석 중…';
@@ -484,23 +782,21 @@ async function openFile(f) {
       $('mcLoad').replaceWith(box);
       cleanup = renderMcap(box, u8);
     } catch (e) {
-      if (token === openToken) setViewer(fileHead(f) + `<div class="msg err">${esc(e.message)}</div>`);
+      if (token === openToken) setContent(fileHead(f) + `<div class="msg err">${esc(e.message)}</div>`);
     }
     return;
   }
   if (isMedia(f.key)) {
     const isVideo = VIDEO.test(f.key);
-    setViewer(fileHead(f) + `<${isVideo ? 'video controls playsinline' : 'img'} class="media"></${isVideo ? 'video' : 'img'}>`);
-    const el = v.querySelector('.media');
+    setContent(fileHead(f) + `<${isVideo ? 'video controls playsinline' : 'img'} class="media"></${isVideo ? 'video' : 'img'}>`);
+    const el = $('content').querySelector('.media');
     el.onerror = () => el.replaceWith(div('msg err',
       isVideo ? '브라우저에서 재생할 수 없는 형식이거나(코덱) 권한/CORS 문제입니다' : '이미지를 불러오지 못했습니다'));
     el.src = await presign(f.key);
     return;
   }
-  setViewer(`<div class="empty">불러오는 중… (${fmtSize(f.size)})</div>`);
-  if (f.size > MAX_BYTES && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) {
-    v.innerHTML = '<div class="empty">취소됨</div>'; return;
-  }
+  if (f.size > MAX_BYTES && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) return go(curPrefix);
+  setContent(fileHead(f) + `<div class="empty">불러오는 중… ${f.size ? `(${fmtSize(f.size)})` : ''}</div>`);
   try {
     const res = await s3(`${baseUrl()}/${encKey(f.key)}`);
     let name = f.key.toLowerCase();
@@ -509,11 +805,10 @@ async function openFile(f) {
       text = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
       name = name.slice(0, -3);
     } else text = await res.text();
-
-    const rows = parse(name, text);
-    renderFile(f, rows, text);
+    if (token !== openToken) return;
+    renderFile(f, parse(name, text), text);
   } catch (e) {
-    v.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+    if (token === openToken) setContent(fileHead(f) + `<div class="msg err">${esc(e.message)}</div>`);
   }
 }
 
@@ -572,7 +867,7 @@ function renderFile(f, rows, text) {
   const head = fileHead(f);
 
   if (!rows || !rows.length) {
-    setViewer(head + `<pre class="raw">${esc(text.slice(0, 20000))}${text.length > 20000 ? '\n…' : ''}</pre>`);
+    setContent(head + `<pre class="raw">${esc(text.slice(0, 20000))}${text.length > 20000 ? '\n…' : ''}</pre>`);
     return;
   }
 
@@ -584,7 +879,7 @@ function renderFile(f, rows, text) {
   const xDefault = cols.find(c => /time|date|ts|stamp/i.test(c)) || '(행 번호)';
   const yDefault = numeric.filter(c => c !== xDefault).slice(0, 3);
 
-  setViewer(head + `
+  setContent(head + `
     <div class="stats">
       <div class="stat"><b>${rows.length.toLocaleString()}</b><span>행</span></div>
       <div class="stat"><b>${cols.length}</b><span>컬럼</span></div>
@@ -611,83 +906,8 @@ function renderFile(f, rows, text) {
     $('xSel').onchange = draw;
     $('ySel').onchange = draw;
     draw();
+    cleanup = () => { chart?.destroy(); chart = null; };
   }
-}
-
-// --- 이미지로 보기: 영상 첫 프레임 / 이미지 썸네일 그리드 ---
-function renderGrid() {
-  const { dirs, files } = listing;
-  setViewer(`<div class="viewer-head"><span class="file">${esc(curPrefix)}</span>
-    <span class="meta" style="color:var(--muted);font-size:12px">폴더 ${dirs.length} · 파일 ${files.length}</span></div>
-    ${dirs.length || files.length ? '<div class="grid" id="grid"></div>' : '<div class="empty">비어 있음</div>'}`);
-  const grid = $('grid');
-  if (!grid) return;
-  // 화면에 보이는 타일만 불러옴
-  const io = new IntersectionObserver(entries => entries.forEach(e => {
-    if (e.isIntersecting) { io.unobserve(e.target); e.target.load(); }
-  }), { rootMargin: '200px' });
-
-  for (const d of dirs) {
-    const t = tile(`📁 ${d.slice(curPrefix.length)}`, '');
-    t.onclick = () => openPrefix(d);
-    t.load = async () => fillThumb(t, await firstMedia(d));
-    grid.append(t); io.observe(t);
-  }
-  for (const f of files) {
-    const t = tile(f.key.slice(curPrefix.length), fmtSize(f.size));
-    t.onclick = () => openFile(f);
-    t.load = () => fillThumb(t, f.key);
-    grid.append(t); io.observe(t);
-  }
-}
-
-function tile(name, sub) {
-  return div('tile', `<div class="thumb">…</div>
-    <div class="cap" title="${esc(name)}">${esc(name)}${sub ? `<small>${esc(sub)}</small>` : ''}</div>`);
-}
-
-// 폴더 안 첫 영상(없으면 첫 이미지)을 대표 장면으로
-async function firstMedia(prefix) {
-  try {
-    const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix, 'max-keys': '1000' }));
-    const keys = [...xml.querySelectorAll('Contents > Key')].map(n => n.textContent);
-    return keys.find(k => VIDEO.test(k)) || keys.find(k => MCAP.test(k)) || keys.find(k => IMAGE.test(k)) || null;
-  } catch { return null; }
-}
-
-async function fillThumb(t, key) {
-  const th = t.querySelector('.thumb');
-  if (key && MCAP.test(key)) {
-    const found = await mcapThumb(key).catch(() => null);
-    if (!found) { th.classList.add('noimg'); th.textContent = 'MCAP'; return; }
-    const el = document.createElement(found.kind === 'video' ? 'video' : 'img');
-    if (found.kind === 'video') Object.assign(el, { muted: true, playsInline: true, preload: 'auto' });
-    el.src = found.url;
-    th.textContent = '';
-    th.append(el);
-    return;
-  }
-  if (!key || !isMedia(key)) {
-    th.classList.add('noimg');
-    th.textContent = key ? key.split('.').pop().toUpperCase() : '미리보기 없음';
-    return;
-  }
-  const url = await presign(key);
-  th.textContent = '';
-  if (IMAGE.test(key)) {
-    const img = document.createElement('img');
-    img.src = url;
-    th.append(img);
-    return;
-  }
-  const vid = document.createElement('video');
-  Object.assign(vid, { muted: true, playsInline: true, preload: 'metadata', loop: true });
-  vid.src = url + '#t=0.1';
-  vid.onerror = () => { th.classList.add('noimg'); th.textContent = '재생 불가'; };
-  th.append(vid);
-  // 마우스 올리면 미리 재생
-  t.onmouseenter = () => vid.play().catch(() => {});
-  t.onmouseleave = () => { vid.pause(); vid.currentTime = 0.1; };
 }
 
 function drawChart(rows, x, ys) {

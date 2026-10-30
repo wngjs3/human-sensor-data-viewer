@@ -275,6 +275,17 @@ export function videoToMp4(video) {
   return { url: URL.createObjectURL(new Blob([target.buffer], { type: 'video/mp4' })), offset: t0 };
 }
 
+// 파일 맨 앞의 session 메타데이터(user_id, task 등) — 앞 몇 KB면 충분
+export function sessionMeta(u8) {
+  let meta = null;
+  const h = {
+    metadata: (name, m) => { if (name === 'session') { meta = m; h.done = true; } },
+    message: () => { h.done = true; },
+  };
+  try { scan(u8, h); } catch {}
+  return meta;
+}
+
 // 파일 앞부분만으로 첫 영상 키프레임(또는 첫 이미지)을 찾아 썸네일용 URL 생성
 export function firstFrame(u8) {
   const types = {}, schemas = {}, channels = {};

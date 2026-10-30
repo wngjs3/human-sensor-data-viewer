@@ -15,6 +15,7 @@ export function renderMcap(container, u8) {
 
   container.insertAdjacentHTML('beforeend', `
     <div class="stats">
+      ${meta.user_id ? `<div class="stat"><b>${esc(meta.user_id)}</b><span>사용자</span></div>` : ''}
       ${meta.task ? `<div class="stat"><b>${esc(meta.task)}</b><span>task</span></div>` : ''}
       <div class="stat"><b>${s.duration.toFixed(1)} s</b><span>길이</span></div>
       <div class="stat"><b>${s.messageCount.toLocaleString()}</b><span>메시지</span></div>
