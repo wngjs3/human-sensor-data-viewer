@@ -1,5 +1,5 @@
 // MCAP 세션 화면: 영상 + 손 스켈레톤 + 촉각 히트맵 + 트래커 궤적 + 시계열, 하나의 타임라인으로 동기화
-import { loadSession, videoToMp4, indexAt, nearest, projectToImage, CAMERA_POSES } from './mcap.js';
+import { loadSession, videoToMp4, indexAt, nearest, projectToImage, correctHand, CAMERA_POSES } from './mcap.js';
 
 const PALETTE = ['#2f6fde', '#e0763a', '#2fa36b', '#c2459a', '#8a63d2', '#c9a227', '#1f9bb3', '#d0463f'];
 const FINGER_COLORS = { thumb: '#e0763a', index: '#2f6fde', middle: '#2fa36b', ring: '#c2459a', pinky: '#8a63d2' };
@@ -91,7 +91,8 @@ export function renderMcap(container, u8) {
       const sc = Math.min(w / v.width, hgt / v.height), ox = (w - v.width * sc) / 2, oy = (hgt - v.height * sc) / 2;
       const px = (x, y, z) => { const [u, q] = projectToImage(cam, v.K, x, y, z); return [ox + u * sc, oy + q * sc]; };
       for (const h of s.rig.hands) {
-        const i = nearest(h.t, lastT + cam.timeOffset), j = h.joints[i], tr = h.tracker[i];
+        const i = nearest(h.t, lastT + cam.timeOffset), tr = h.tracker[i];
+        const fix = cam.handFix?.[h.side], j = fix ? correctHand(h.joints[i], tr, fix) : h.joints[i];
         const at = k => px(j[k * 3], j[k * 3 + 1], j[k * 3 + 2]);
         ctx.lineCap = 'round'; ctx.lineWidth = 2;
         h.parent.forEach((par, k) => {

@@ -233,8 +233,22 @@ export const CAMERA_POSES = {
     t: [0.0424, -0.25836, 1.21494],
     trackerDot: 0.0212, // 흰 점이 트래커 원점에서 -z로 떨어진 거리 (m)
     timeOffset: 0.01, // 영상 시각 + 이 값(s) = 센서 시각
+    // 영상에 겹칠 때만 쓰는 손 위치 보정 (트래커 기준, 손 좌표계). 칠판에 가까이 가기 전 프레임의 검지 끝으로 구함.
+    handFix: { right: { yawDeg: -1.785, t: [-0.00451, 0.00144, -0.03107] } },
   },
 };
+
+// 손 관절에 handFix 적용: 트래커 중심으로 손등 축 회전 + 손 좌표계 이동
+export function correctHand(joints, tracker, fix) {
+  const a = fix.yawDeg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const H = tracker.hand, HT = matT(H), Rc = matMul(matMul(H, [c, -s, 0, s, c, 0, 0, 0, 1]), HT);
+  const off = apply(H, fix.t[0], fix.t[1], fix.t[2]), p = tracker.pos, out = new Float64Array(joints.length);
+  for (let i = 0; i < joints.length; i += 3) {
+    const v = apply(Rc, joints[i] - p[0], joints[i + 1] - p[1], joints[i + 2] - p[2]);
+    for (let k = 0; k < 3; k++) out[i + k] = p[k] + v[k] + off[k];
+  }
+  return out;
+}
 
 // rig 좌표 → 영상 픽셀. K는 camera_info (rectified라 왜곡 없음)
 export function projectToImage(cam, K, x, y, z) {
@@ -311,7 +325,7 @@ function rigHands(att, hands, poses) {
         out3.set(toRig(wrist[0] + v[0], wrist[1] + v[1], wrist[2] + v[2]), a * 3);
       });
       joints.push(out3);
-      tracker.push({ pos: toRig(X[i], Y[i], Z[i]), rot: matMul(RrigT, Rt) });
+      tracker.push({ pos: toRig(X[i], Y[i], Z[i]), rot: matMul(RrigT, Rt), hand: matMul(matMul(RrigT, Rt), mrot) });
     });
     out.push({ side, serial, t: h.t, names: h.joints, parent: h.parent, joints, tracker });
   }
