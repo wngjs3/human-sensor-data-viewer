@@ -283,8 +283,10 @@ $('forget').onclick = () => {
 };
 
 $('connect').onclick = async () => {
+  // 키에는 공백이 없으므로 복사 중 섞인 공백·줄바꿈·보이지 않는 문자 제거
+  const clean = id => $(id).value.replace(/[\s​-‍﻿]/g, '');
   cfg = {
-    ak: $('ak').value.trim(), sk: $('sk').value.trim(), st: $('st').value.trim(),
+    ak: clean('ak'), sk: clean('sk'), st: clean('st'),
     region: $('region').value.trim(), bucket: $('bucket').value.trim(),
     prefix: $('prefix').value.trim().replace(/^\/+/, ''),
   };
@@ -323,8 +325,14 @@ async function s3(url, init) {
     const body = await res.text();
     const code = body.match(/<Code>(.*?)<\/Code>/)?.[1] || res.status;
     const msg = body.match(/<Message>(.*?)<\/Message>/)?.[1] || res.statusText;
-    const region = res.headers.get('x-amz-bucket-region');
-    throw new Error(`${code}: ${msg}${region ? `\n버킷 리전은 ${region} 입니다` : ''}`);
+    const hint = {
+      SignatureDoesNotMatch: 'Secret Access Key가 Access Key ID와 맞지 않아요. Secret Key를 다시 복사해서 붙여넣어 보세요.',
+      InvalidAccessKeyId: 'Access Key ID가 없거나 비활성화된 키예요.',
+      AccessDenied: '이 키에 이 버킷/경로를 읽을 권한이 없어요 (s3:ListBucket, s3:GetObject 필요).',
+      ExpiredToken: 'Session Token이 만료됐어요. 새로 발급받아 넣어주세요.',
+      RequestTimeTooSkewed: '컴퓨터 시계가 많이 틀려요. 시간 자동 설정을 켜주세요.',
+    }[code];
+    throw new Error(`${hint ? `${hint}\n` : ''}(${code}: ${msg})`);
   }
   return res;
 }
