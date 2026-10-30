@@ -1,0 +1,10 @@
+{
+  "CORSRules": [
+    {
+      "AllowedHeaders": ["*"],
+      "AllowedMethods": ["GET", "HEAD"],
+      "AllowedOrigins": ["https://wngjs3.github.io", "http://localhost:4180"],
+      "ExposeHeaders": ["x-amz-bucket-region"]
+    }
+  ]
+}

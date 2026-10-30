@@ -38,6 +38,12 @@ S3 콘솔 → `riselab-data-bucket` → 권한 → CORS:
 ]
 ```
 
+CLI로 적용하려면 (`s3:PutBucketCORS` 권한 필요):
+
+```bash
+aws s3api put-bucket-cors --bucket riselab-data-bucket --cors-configuration file://cors.json
+```
+
 ## 로컬 실행
 
 ```bash
