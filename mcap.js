@@ -47,6 +47,12 @@ function record(op, r, stop, h) {
       walk(data, 0, h);
       break;
     }
+    case 0x09: {
+      r.u64(); r.u64();
+      const name = r.str(), mediaType = r.str();
+      h.attachment?.({ name, mediaType, data: r.bytes(r.u64()) });
+      break;
+    }
     case 0x0C: { const name = r.str(); h.metadata?.(name, r.map()); break; }
   }
 }
@@ -141,7 +147,7 @@ const attrsObj = a => Array.isArray(a) ? Object.fromEntries(a.map(e => [e.key, e
 
 // MCAP 전체 → 시각화용 구조
 export function loadSession(u8) {
-  const types = {}, schemas = {}, channels = {}, metadata = {};
+  const types = {}, schemas = {}, channels = {}, metadata = {}, attachments = {};
   let t0 = Infinity, t1 = -Infinity;
   scan(u8, {
     schema: s => { schemas[s.id] = s; if (s.encoding === 'protobuf') Object.assign(types, descriptorTypes(s.data)); },
@@ -152,6 +158,10 @@ export function loadSession(u8) {
       if (m.logTime > t1) t1 = m.logTime;
     },
     metadata: (name, m) => { metadata[name] = m; },
+    // 손 좌표 변환에 쓰는 것만 (libsurvive_config.json은 JSON이 아님)
+    attachment: a => {
+      if (RIG_FILES.includes(a.name)) { try { attachments[a.name] = JSON.parse(td.decode(a.data)); } catch {} }
+    },
   });
 
   const chans = Object.values(channels).map(c => ({
@@ -176,6 +186,7 @@ export function loadSession(u8) {
       const names = ['x_m', 'y_m', 'z_m', 'qx', 'qy', 'qz', 'qw'];
       const rows = msgs.map(m => { const p = m.d.pose || {}; return [p.xM, p.yM, p.zM, p.qx, p.qy, p.qz, p.qw].map(v => v ?? 0); });
       const s = table(topic, names, msgs.map(m => m.t), rows);
+      s.ns = Float64Array.from(msgs, m => m.d.time?.sampleNs ?? 0);
       series.push(s); poses.push(s);
     } else if (short === 'SignalChunk') {
       const lay = layoutOf(topic), rate = lay?.rate || 1000;
@@ -191,7 +202,8 @@ export function loadSession(u8) {
       const base = topic.replace(/\/pose$/, '');
       const topo = byTopic[base + '/topology']?.msgs[0]?.d || {};
       hands.push({ topic, joints: topo.jointNames || [], parent: topo.parentIndex || [],
-        t: Float64Array.from(msgs, m => m.t), pos: msgs.map(m => Float32Array.from(m.d.positionM || [])) });
+        t: Float64Array.from(msgs, m => m.t), ns: Float64Array.from(msgs, m => m.d.time?.sampleNs ?? 0),
+        pos: msgs.map(m => Float64Array.from(m.d.positionM || [])), quat: msgs.map(m => m.d.quatXyzw || []) });
     } else if (short === 'CompressedVideo') {
       const info = byTopic[topic.replace(/\/[^/]+$/, '/camera_info')]?.msgs[0]?.d;
       videos.push({ topic, width: info?.width || 1280, height: info?.height || 720, format: msgs[0].d.format,
@@ -206,7 +218,84 @@ export function loadSession(u8) {
     }
   }
   return { duration: (t1 - t0) / 1e9, start: t0, metadata, series, hands, videos, images, poses,
-    messageCount: chans.reduce((a, c) => a + c.msgs.length, 0) };
+    rig: rigHands(attachments, hands, poses), messageCount: chans.reduce((a, c) => a + c.msgs.length, 0) };
+}
+
+// ---------- 손을 rig 좌표로 (Manus 관절 + Vive 트래커 + 녹화에 첨부된 보정값) ----------
+const RIG_FILES = ['hands.json', 'hand_mount.json', 'rig_frame.json'];
+
+// 3×3 행렬은 행 우선 배열. 쿼터니언은 입력 순서가 x y z w (json의 wxyz는 호출할 때 바꿔 넣음)
+function quatMat(x, y, z, w) {
+  const n = Math.hypot(x, y, z, w) || 1;
+  x /= n; y /= n; z /= n; w /= n;
+  return [
+    1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+    2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+    2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+  ];
+}
+const matMul = (a, b) => Array.from({ length: 9 }, (_, i) => {
+  const r = i - i % 3, c = i % 3;
+  return a[r] * b[c] + a[r + 1] * b[c + 3] + a[r + 2] * b[c + 6];
+});
+const matT = m => [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+const apply = (m, x, y, z) => [m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z];
+const axisVec = s => { const v = [0, 0, 0]; v['xyz'.indexOf(s.at(-1))] = s[0] === '-' ? -1 : 1; return v; };
+
+// 내재적(intrinsic) XYZ 오일러 = Rx · Ry · Rz
+function eulerXYZ([a, b, c]) {
+  const [ca, sa, cb, sb, cc, sc] = [a, b, c].flatMap(d => { const r = d * Math.PI / 180; return [Math.cos(r), Math.sin(r)]; });
+  return matMul(matMul([1, 0, 0, 0, ca, -sa, 0, sa, ca], [cb, 0, sb, 0, 1, 0, -sb, 0, cb]), [cc, -sc, 0, sc, cc, 0, 0, 0, 1]);
+}
+
+function nearest(ts, v) {
+  let lo = 0, hi = ts.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (ts[mid] < v) lo = mid + 1; else hi = mid; }
+  return lo > 0 && v - ts[lo - 1] <= ts[lo] - v ? lo - 1 : lo;
+}
+
+function rigHands(att, hands, poses) {
+  const missing = RIG_FILES.filter(n => !att[n]);
+  if (missing.length) return { hands: [], problem: `첨부파일 없음: ${missing.join(', ')}` };
+  const mount = att['hand_mount.json'], wfr = att['rig_frame.json'].world_from_rig;
+  if (!wfr) return { hands: [], problem: 'rig_frame.json에 world_from_rig가 없음' };
+  const [qw, qx, qy, qz] = wfr.quat_wxyz, Rrig = quatMat(qx, qy, qz, qw), RrigT = matT(Rrig), prig = wfr.pos_m;
+  const toRig = (x, y, z) => apply(RrigT, x - prig[0], y - prig[1], z - prig[2]);
+  const up = axisVec(mount.up_axis), fing = axisVec(mount.fingers_axis);
+  const side3 = [up[1] * fing[2] - up[2] * fing[1], up[2] * fing[0] - up[0] * fing[2], up[0] * fing[1] - up[1] * fing[0]];
+  const basis = [fing[0], side3[0], up[0], fing[1], side3[1], up[1], fing[2], side3[2], up[2]]; // 열로 쌓기
+  const off = mount.offset_mm.map(v => v / 1000);
+  const out = [], problems = [];
+  for (const h of hands) {
+    const side = h.topic.match(/\/manus\/([^/]+)\//)?.[1];
+    const serial = att['hands.json'][side]?.tracker_serial;
+    const pose = poses.find(p => p.topic === `/vive/${serial}/pose`);
+    const w = h.joints.indexOf('wrist'), mp = h.joints.indexOf('middle_proximal');
+    if (!pose || w < 0 || mp < 0) { problems.push(`${side}: 트래커(${serial})나 관절 이름을 찾지 못함`); continue; }
+    const trim = Array.isArray(mount.trim_deg) ? mount.trim_deg : mount.trim_deg[side];
+    const mrot = matMul(basis, eulerXYZ(trim));
+    const [X, Y, Z, QX, QY, QZ, QW] = pose.cols;
+    const joints = [], tracker = [];
+    h.pos.forEach((p, f) => {
+      const q = h.quat[f], n = p.length / 3;
+      const un = matT(quatMat(q[w * 4], q[w * 4 + 1], q[w * 4 + 2], q[w * 4 + 3]));
+      const jh = Array.from({ length: n }, (_, i) => apply(un, p[i * 3], p[i * 3 + 1], p[i * 3 + 2]));
+      const palm = [0, 1, 2].map(k => (jh[w][k] + jh[mp][k]) / 2);
+      const i = nearest(pose.ns, h.ns[f]);
+      const Rt = quatMat(QX[i], QY[i], QZ[i], QW[i]), hr = matMul(Rt, mrot);
+      const d = apply(hr, palm[0] + off[0], palm[1] + off[1], palm[2] + off[2]);
+      const wrist = [X[i] - d[0], Y[i] - d[1], Z[i] - d[2]];
+      const out3 = new Float64Array(n * 3);
+      jh.forEach((j, a) => {
+        const v = apply(hr, j[0], j[1], j[2]);
+        out3.set(toRig(wrist[0] + v[0], wrist[1] + v[1], wrist[2] + v[2]), a * 3);
+      });
+      joints.push(out3);
+      tracker.push({ pos: toRig(X[i], Y[i], Z[i]), rot: matMul(RrigT, Rt) });
+    });
+    out.push({ side, serial, t: h.t, names: h.joints, parent: h.parent, joints, tracker });
+  }
+  return { hands: out, problem: problems.join(' / ') };
 }
 
 function table(topic, names, ts, rows, layout) {

@@ -3,6 +3,7 @@ import { loadSession, videoToMp4, indexAt } from './mcap.js';
 
 const PALETTE = ['#2f6fde', '#e0763a', '#2fa36b', '#c2459a', '#8a63d2', '#c9a227', '#1f9bb3', '#d0463f'];
 const FINGER_COLORS = { thumb: '#e0763a', index: '#2f6fde', middle: '#2fa36b', ring: '#c2459a', pinky: '#8a63d2' };
+const fingerColor = name => FINGER_COLORS[Object.keys(FINGER_COLORS).find(k => name.startsWith(k))] || css('--muted');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -108,6 +109,89 @@ export function renderMcap(container, u8) {
     disposers.push(() => url && URL.revokeObjectURL(url));
   }
 
+  // ---- 3D: rig 좌표의 손 + Vive 트래커 ----
+  if (s.rig.hands.length) {
+    const el = panel('3D · rig 좌표 (m) · 드래그 회전, 휠 확대, 더블클릭 초기화', true);
+    const cv = canvas(el);
+    cv.style.height = '460px';
+    if (s.rig.problem) el.insertAdjacentHTML('beforeend', `<div class="msg err">${esc(s.rig.problem)}</div>`);
+    // 움직인 범위 전체가 보이도록
+    const lo = [Infinity, Infinity, 0], hi = [-Infinity, -Infinity, 0];
+    for (const h of s.rig.hands) for (let f = 0; f < h.joints.length; f += 5) {
+      const j = h.joints[f];
+      for (let i = 0; i < j.length; i++) { const k = i % 3; if (j[i] < lo[k]) lo[k] = j[i]; if (j[i] > hi[k]) hi[k] = j[i]; }
+    }
+    const center = [0, 1, 2].map(k => (lo[k] + hi[k]) / 2);
+    const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.2);
+    const home = { yaw: -0.9, pitch: 0.6, dist: span * 1.5 };
+    let { yaw, pitch, dist } = home, lastT = 0;
+    const redraw = () => {
+      const { ctx, w, hgt } = fit(cv);
+      const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const eye = [center[0] + dist * cp * cy, center[1] + dist * cp * sy, center[2] + dist * sp];
+      const right = [-sy, cy, 0], up = [-sp * cy, -sp * sy, cp], fwd = [-cp * cy, -cp * sy, -sp];
+      const f = Math.min(w, hgt) * 1.3;
+      const proj = p => {
+        const d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+        const z = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+        if (z < 0.02) return null; // 카메라 뒤
+        const x = d[0] * right[0] + d[1] * right[1], y = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+        return [w / 2 + x * f / z, hgt / 2 - y * f / z];
+      };
+      const line = (a, b, color, width = 1) => {
+        const pa = proj(a), pb = proj(b);
+        if (!pa || !pb) return;
+        ctx.strokeStyle = color; ctx.lineWidth = width;
+        ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke();
+      };
+      ctx.lineCap = 'round';
+      ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+
+      // 바닥 격자 (z = 0, 10 cm 간격)
+      const g0 = [lo[0], lo[1]].map(v => Math.floor(Math.min(v, 0) * 10 - 1) / 10);
+      const g1 = [hi[0], hi[1]].map(v => Math.ceil(Math.max(v, 0) * 10 + 1) / 10);
+      for (let x = g0[0]; x <= g1[0] + 1e-6; x += 0.1) line([x, g0[1], 0], [x, g1[1], 0], css('--line'));
+      for (let y = g0[1]; y <= g1[1] + 1e-6; y += 0.1) line([g0[0], y, 0], [g1[0], y, 0], css('--line'));
+
+      // rig 원점 축
+      [[[0.1, 0, 0], '#d0463f', 'X'], [[0, 0.1, 0], '#2fa36b', 'Y'], [[0, 0, 0.1], '#2f6fde', 'Z']].forEach(([v, c, label]) => {
+        line([0, 0, 0], v, c, 2);
+        const p = proj(v);
+        if (p) { ctx.fillStyle = c; ctx.fillText(label, p[0], p[1] - 4); }
+      });
+
+      const lines = [];
+      for (const h of s.rig.hands) {
+        const i = indexAt(h.t, lastT), j = h.joints[i], tr = h.tracker[i];
+        const at = k => [j[k * 3], j[k * 3 + 1], j[k * 3 + 2]];
+        // 트래커 궤적: 전체는 옅게, 지나온 부분은 진하게
+        for (let k = 4; k < h.tracker.length; k += 4) line(h.tracker[k - 4].pos, h.tracker[k].pos, k <= i ? PALETTE[0] : css('--line'), k <= i ? 1.5 : 1);
+        // 트래커 본체 축 + 손목까지 연결
+        const w0 = h.names.indexOf('wrist');
+        ctx.setLineDash([3, 3]); line(tr.pos, at(w0), css('--muted')); ctx.setLineDash([]);
+        [[tr.rot[0], tr.rot[3], tr.rot[6], '#d0463f'], [tr.rot[1], tr.rot[4], tr.rot[7], '#2fa36b'], [tr.rot[2], tr.rot[5], tr.rot[8], '#2f6fde']]
+          .forEach(([x, y, z, c]) => line(tr.pos, [tr.pos[0] + x * 0.03, tr.pos[1] + y * 0.03, tr.pos[2] + z * 0.03], c, 2));
+        // 손 뼈대
+        h.parent.forEach((par, k) => { if (par >= 0) line(at(par), at(k), fingerColor(h.names[k] || ''), 3); });
+        ctx.fillStyle = css('--text');
+        for (let k = 0; k < h.names.length; k++) {
+          const p = proj(at(k));
+          if (p) { ctx.beginPath(); ctx.arc(p[0], p[1], 2.2, 0, 7); ctx.fill(); }
+        }
+        const fmt3 = v => v.map(x => x.toFixed(3)).join(', ');
+        lines.push(`${h.side}  손목 [${fmt3(at(w0))}]  검지 끝 [${fmt3(at(h.names.indexOf('index_tip')))}]`);
+      }
+      ctx.fillStyle = css('--muted'); ctx.textAlign = 'left';
+      lines.forEach((l, k) => ctx.fillText(l, 8, hgt - 8 - (lines.length - 1 - k) * 15));
+    };
+    drag(cv, (dx, dy) => { yaw -= dx * 0.01; pitch = Math.max(-1.5, Math.min(1.5, pitch + dy * 0.01)); redraw(); });
+    cv.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(0.1, dist * Math.exp(e.deltaY * 0.001)); redraw(); }, { passive: false });
+    cv.ondblclick = () => { ({ yaw, pitch, dist } = home); redraw(); };
+    views.push({ draw: tt => { lastT = tt; redraw(); } });
+  } else if (s.rig.problem) {
+    panel('3D · rig 좌표', true).insertAdjacentHTML('beforeend', `<div class="msg err">3D로 합칠 수 없어요: ${esc(s.rig.problem)}</div>`);
+  }
+
   // ---- hand skeleton ----
   for (const h of s.hands) {
     const el = panel(`${h.topic} · 드래그로 회전`);
@@ -116,7 +200,6 @@ export function renderMcap(container, u8) {
     drag(cv, (dx, dy) => { yaw += dx * 0.01; pitch += dy * 0.01; redraw(); });
     let extent = 0.05;
     for (const p of h.pos.slice(0, 50)) for (const x of p) extent = Math.max(extent, Math.abs(x));
-    const colorOf = name => FINGER_COLORS[Object.keys(FINGER_COLORS).find(k => name.startsWith(k))] || css('--muted');
     let lastT = 0;
     const redraw = () => {
       const p = h.pos[indexAt(h.t, lastT)];
@@ -136,7 +219,7 @@ export function renderMcap(container, u8) {
       h.parent.forEach((par, i) => {
         if (par < 0) return;
         const [ax, ay] = proj(par), [bx, by] = proj(i);
-        ctx.strokeStyle = colorOf(h.joints[i] || '');
+        ctx.strokeStyle = fingerColor(h.joints[i] || '');
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
       });
       ctx.fillStyle = css('--text');
