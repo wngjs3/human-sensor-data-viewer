@@ -22,13 +22,14 @@ export function renderMcap(container, u8) {
       <div class="stat"><b>${s.messageCount.toLocaleString()}</b><span>메시지</span></div>
       <div class="stat"><b>${s.series.length + s.videos.length + s.hands.length}</b><span>스트림</span></div>
     </div>
-    <div class="mc-panels"></div>
+    <div class="mc-top"></div>
     <div class="mc-timeline">
       <button class="mc-play">▶</button>
       <input type="range" class="mc-seek" min="0" max="${s.duration}" step="0.001" value="0">
       <span class="mc-time">${fmt(0)} / ${fmt(s.duration)}</span>
       <select class="mc-speed">${[0.25, 0.5, 1, 2, 4].map(r => `<option value="${r}" ${r === 1 ? 'selected' : ''}>${r}×</option>`).join('')}</select>
     </div>
+    <div class="mc-panels"></div>
     <div class="mc-charts"></div>`);
   const panels = container.querySelector('.mc-panels');
   const q = sel => container.querySelector(sel);
@@ -61,11 +62,12 @@ export function renderMcap(container, u8) {
   const seekTo = nt => { setTime(nt); views.forEach(v => v.seek?.(t)); };
   disposers.push(() => cancelAnimationFrame(raf));
 
-  const panel = (title, wide) => {
+  // top: 영상·3D처럼 위쪽에 나란히 놓는 패널
+  const panel = (title, top) => {
     const el = document.createElement('div');
-    el.className = 'mc-panel' + (wide ? ' wide' : '');
+    el.className = 'mc-panel';
     el.innerHTML = `<div class="mc-title">${esc(title)}</div>`;
-    panels.append(el);
+    (top ? q('.mc-top') : panels).append(el);
     return el;
   };
 
@@ -113,7 +115,6 @@ export function renderMcap(container, u8) {
   if (s.rig.hands.length) {
     const el = panel('3D · rig 좌표 (m) · 드래그 회전, 휠 확대, 더블클릭 초기화', true);
     const cv = canvas(el);
-    cv.style.height = '460px';
     if (s.rig.problem) el.insertAdjacentHTML('beforeend', `<div class="msg err">${esc(s.rig.problem)}</div>`);
     // 움직인 범위 전체가 보이도록
     const lo = [Infinity, Infinity, 0], hi = [-Infinity, -Infinity, 0];
@@ -188,12 +189,18 @@ export function renderMcap(container, u8) {
     cv.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(0.1, dist * Math.exp(e.deltaY * 0.001)); redraw(); }, { passive: false });
     cv.ondblclick = () => { ({ yaw, pitch, dist } = home); redraw(); };
     views.push({ draw: tt => { lastT = tt; redraw(); } });
+    // 영상이 로드되면 줄 높이가 바뀌므로 크기 변화에 맞춰 다시 그림
+    const ro = new ResizeObserver(redraw);
+    ro.observe(cv);
+    disposers.push(() => ro.disconnect());
   } else if (s.rig.problem) {
     panel('3D · rig 좌표', true).insertAdjacentHTML('beforeend', `<div class="msg err">3D로 합칠 수 없어요: ${esc(s.rig.problem)}</div>`);
   }
 
   // ---- hand skeleton ----
-  for (const h of s.hands) {
+  // 3D로 합칠 수 없는 녹화에서만 대신 표시
+  const has3d = s.rig.hands.length > 0;
+  for (const h of has3d ? [] : s.hands) {
     const el = panel(`${h.topic} · 드래그로 회전`);
     const cv = canvas(el);
     let yaw = 0, pitch = 0;
@@ -266,7 +273,7 @@ export function renderMcap(container, u8) {
   }
 
   // ---- tracker trajectory (top view) ----
-  for (const p of s.poses) {
+  for (const p of has3d ? [] : s.poses) {
     const el = panel(`${p.topic} · 위에서 본 궤적`);
     const cv = canvas(el);
     const [X, Y, Z] = p.cols;
