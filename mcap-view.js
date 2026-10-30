@@ -165,7 +165,7 @@ export function renderMcap(container, u8) {
 
   // ---- 3D: rig 좌표의 손 + Vive 트래커 ----
   if (s.rig.hands.length) {
-    const el = panel('3D · rig 좌표 (m) · 드래그 회전, 휠 확대, 더블클릭 초기화', true);
+    const el = panel('3D · rig 좌표 (m) · 드래그 회전, 휠 확대, 더블클릭 카메라 시점', true);
     const cv = canvas(el);
     if (s.rig.problem) el.insertAdjacentHTML('beforeend', `<div class="msg err">${esc(s.rig.problem)}</div>`);
     // 움직인 범위 전체가 보이도록
@@ -174,22 +174,50 @@ export function renderMcap(container, u8) {
       const j = h.joints[f];
       for (let i = 0; i < j.length; i++) { const k = i % 3; if (j[i] < lo[k]) lo[k] = j[i]; if (j[i] > hi[k]) hi[k] = j[i]; }
     }
-    const center = [0, 1, 2].map(k => (lo[k] + hi[k]) / 2);
+    const home3d = [0, 1, 2].map(k => (lo[k] + hi[k]) / 2);
+    let center = home3d;
     const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.2);
     const home = { yaw: -0.9, pitch: 0.6, dist: span * 1.5 };
     let { yaw, pitch, dist } = home, lastT = 0;
+    // 카메라 위치를 알면 기본 시점을 천장 카메라와 똑같이 (렌즈 값까지 사용)
+    const vid = s.videos.find(v => v.K && CAMERA_POSES[v.topic.match(/\/zed\/([^/]+)\//)?.[1]]);
+    const cam = vid && CAMERA_POSES[vid.topic.match(/\/zed\/([^/]+)\//)?.[1]];
+    const camBasis = cam && {
+      right: cam.R.slice(0, 3), up: cam.R.slice(3, 6).map(v => -v), fwd: cam.R.slice(6, 9),
+      eye: [0, 1, 2].map(k => -(cam.R[k] * cam.t[0] + cam.R[k + 3] * cam.t[1] + cam.R[k + 6] * cam.t[2])),
+    };
+    let camView = !!cam;
+    // 카메라 시점에서 벗어날 때 같은 위치에서 궤도 회전이 시작되도록
+    const leaveCam = () => {
+      if (!camView) return;
+      camView = false;
+      const { eye, fwd } = camBasis;
+      dist = 1.2;
+      center = eye.map((v, k) => v + fwd[k] * dist);
+      pitch = Math.asin(-fwd[2]);
+      yaw = Math.atan2(-fwd[1], -fwd[0]);
+    };
     const redraw = () => {
       const { ctx, w, hgt } = fit(cv);
-      const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
-      const eye = [center[0] + dist * cp * cy, center[1] + dist * cp * sy, center[2] + dist * sp];
-      const right = [-sy, cy, 0], up = [-sp * cy, -sp * sy, cp], fwd = [-cp * cy, -cp * sy, -sp];
-      const f = Math.min(w, hgt) * 1.3;
+      let eye, right, up, fwd, f, cx0 = w / 2, cy0 = hgt / 2;
+      if (camView) {
+        ({ eye, right, up, fwd } = camBasis);
+        const sc = Math.min(w / vid.width, hgt / vid.height);
+        f = vid.K[0] * sc;
+        cx0 = (w - vid.width * sc) / 2 + vid.K[2] * sc;
+        cy0 = (hgt - vid.height * sc) / 2 + vid.K[5] * sc;
+      } else {
+        const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+        eye = [center[0] + dist * cp * cy, center[1] + dist * cp * sy, center[2] + dist * sp];
+        right = [-sy, cy, 0]; up = [-sp * cy, -sp * sy, cp]; fwd = [-cp * cy, -cp * sy, -sp];
+        f = Math.min(w, hgt) * 1.3;
+      }
       const proj = p => {
         const d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
         const z = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
         if (z < 0.02) return null; // 카메라 뒤
-        const x = d[0] * right[0] + d[1] * right[1], y = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
-        return [w / 2 + x * f / z, hgt / 2 - y * f / z];
+        const x = d[0] * right[0] + d[1] * right[1] + d[2] * right[2], y = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+        return [cx0 + x * f / z, cy0 - y * f / z];
       };
       const line = (a, b, color, width = 1) => {
         const pa = proj(a), pb = proj(b);
@@ -237,9 +265,9 @@ export function renderMcap(container, u8) {
       ctx.fillStyle = css('--muted'); ctx.textAlign = 'left';
       lines.forEach((l, k) => ctx.fillText(l, 8, hgt - 8 - (lines.length - 1 - k) * 15));
     };
-    drag(cv, (dx, dy) => { yaw -= dx * 0.01; pitch = Math.max(-1.5, Math.min(1.5, pitch + dy * 0.01)); redraw(); });
-    cv.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(0.1, dist * Math.exp(e.deltaY * 0.001)); redraw(); }, { passive: false });
-    cv.ondblclick = () => { ({ yaw, pitch, dist } = home); redraw(); };
+    drag(cv, (dx, dy) => { leaveCam(); yaw -= dx * 0.01; pitch = Math.max(-1.5, Math.min(1.5, pitch + dy * 0.01)); redraw(); });
+    cv.addEventListener('wheel', e => { e.preventDefault(); leaveCam(); dist = Math.max(0.1, dist * Math.exp(e.deltaY * 0.001)); redraw(); }, { passive: false });
+    cv.ondblclick = () => { camView = !!cam; ({ yaw, pitch, dist } = home); center = home3d; redraw(); };
     views.push({ draw: tt => { lastT = tt; redraw(); } });
     // 영상이 로드되면 줄 높이가 바뀌므로 크기 변화에 맞춰 다시 그림
     const ro = new ResizeObserver(redraw);
