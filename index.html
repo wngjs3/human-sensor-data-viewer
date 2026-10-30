@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S3 Sensor Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --soft: #eef1f5; --line: #dde2e8;
+    --text: #1d2330; --muted: #6b7380; --accent: #2f6fde; --accent-soft: #e6eefc;
+    --danger: #c43c3c; --danger-soft: #fbeaea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --soft: #222833; --line: #2d3440;
+      --text: #e4e8ef; --muted: #8d96a5; --accent: #6b9cf0; --accent-soft: #23314a;
+      --danger: #e67a7a; --danger-soft: #3a2224;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; }
+  header { padding: 16px 24px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .loc { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  main { padding: 0 24px 24px; display: grid; gap: 16px; grid-template-columns: 340px 1fr; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 0 16px 16px; } header { padding: 16px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  textarea { resize: vertical; font-family: ui-monospace, Menlo, monospace !important; font-size: 11px !important; }
+  input[type=text], input[type=password], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+  input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  button { padding: 8px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+    font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: var(--soft); color: var(--text); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  .check { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin: 10px 0; }
+  .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .msg.err { background: var(--danger-soft); color: var(--danger); }
+  .msg.ok { background: var(--accent-soft); color: var(--accent); }
+  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .crumbs { font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-bottom: 8px; word-break: break-all; }
+  .crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .list { max-height: 460px; overflow: auto; margin: 0 -8px; }
+  .item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .item:hover { background: var(--soft); }
+  .item.sel { background: var(--accent-soft); }
+  .item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+  details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  pre { background: var(--soft); border-radius: 8px; padding: 10px; font-size: 11px; overflow: auto; margin: 8px 0 0; }
+  .viewer-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .viewer-head .file { font-family: ui-monospace, Menlo, monospace; font-size: 13px; word-break: break-all; }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat { background: var(--soft); border-radius: 8px; padding: 8px 12px; }
+  .stat b { display: block; font-size: 16px; }
+  .stat span { font-size: 11px; color: var(--muted); }
+  .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-bottom: 12px; }
+  @media (max-width: 600px) { .controls { grid-template-columns: 1fr; } }
+  .ychecks { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; gap: 4px; align-items: center; background: var(--soft); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .chart-wrap { position: relative; height: 340px; margin-bottom: 16px; }
+  .table-wrap { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--soft); font-weight: 600; }
+  .raw { max-height: 500px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>S3 Sensor Viewer</h1>
+  <span class="loc" id="loc"></span>
+</header>
+
+<main>
+  <div class="side">
+    <section class="card">
+      <h2>연결 설정</h2>
+      <label>키 붙여넣기 (env / ~/.aws/credentials / STS JSON)</label>
+      <textarea id="paste" rows="3" spellcheck="false" placeholder="export AWS_ACCESS_KEY_ID=...&#10;export AWS_SECRET_ACCESS_KEY=..."></textarea>
+      <label>Access Key ID</label>
+      <input type="text" id="ak" autocomplete="off" spellcheck="false">
+      <label>Secret Access Key</label>
+      <input type="password" id="sk" autocomplete="off">
+      <label>Session Token (선택)</label>
+      <input type="password" id="st" autocomplete="off">
+      <div class="row">
+        <div><label>Region</label><input type="text" id="region" value="ap-northeast-2"></div>
+        <div><label>Bucket</label><input type="text" id="bucket" value="riselab-data-bucket"></div>
+      </div>
+      <label>Prefix</label>
+      <input type="text" id="prefix" value="share/data/human-sensor/raw/">
+      <label class="check"><input type="checkbox" id="remember"> 이 브라우저에 키 저장</label>
+      <div class="row">
+        <button id="connect">연결</button>
+        <button class="ghost" id="forget" style="flex:0 0 auto">키 지우기</button>
+      </div>
+      <div id="connMsg"></div>
+      <details style="margin-top:12px">
+        <summary>CORS 오류가 나면 (버킷 CORS 설정)</summary>
+        <pre id="cors"></pre>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>파일</h2>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="list" id="list"><div class="empty">키를 입력하고 연결하세요</div></div>
+      <button class="ghost" id="more" style="display:none;width:100%;margin-top:8px">더 보기</button>
+    </section>
+  </div>
+
+  <section class="card" id="viewer">
+    <div class="empty">왼쪽에서 파일을 선택하세요</div>
+  </section>
+</main>
+
+<script type="module">
+import { AwsClient } from 'https://cdn.jsdelivr.net/npm/aws4fetch@1.0.20/dist/aws4fetch.esm.mjs';
+
+const $ = id => document.getElementById(id);
+const STORE = 's3viewer.v1';
+const MAX_ROWS_TABLE = 200, MAX_POINTS = 4000, MAX_BYTES = 50 * 1024 * 1024;
+
+let client = null, cfg = null, curPrefix = '', nextToken = null, chart = null;
+
+// --- settings ---
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+  if (saved) {
+    for (const k of ['ak', 'sk', 'st', 'region', 'bucket', 'prefix']) if (saved[k] != null) $(k).value = saved[k];
+    $('remember').checked = true;
+  }
+} catch {}
+
+$('cors').textContent = JSON.stringify([{
+  AllowedHeaders: ['*'], AllowedMethods: ['GET', 'HEAD'],
+  AllowedOrigins: [location.origin.startsWith('http') ? location.origin : '*'],
+  ExposeHeaders: ['x-amz-bucket-region'],
+}], null, 2);
+
+// env 변수, ~/.aws/credentials, `aws sts` JSON 출력 어느 형식이든 붙여넣으면 채움
+const PASTE_RULES = {
+  ak: /(?:aws_access_key_id|AccessKeyId)["']?\s*[:=]\s*["']?([A-Z0-9]{16,})/i,
+  sk: /(?:aws_secret_access_key|SecretAccessKey)["']?\s*[:=]\s*["']?([^\s"',]+)/i,
+  st: /(?:aws_session_token|SessionToken)["']?\s*[:=]\s*["']?([^\s"',]+)/i,
+  region: /(?:aws_default_region|aws_region|^\s*region)["']?\s*[:=]\s*["']?([a-z]{2}-[a-z]+-\d)/im,
+};
+$('paste').oninput = () => {
+  const text = $('paste').value;
+  const found = Object.entries(PASTE_RULES).filter(([k, re]) => {
+    const m = text.match(re);
+    if (m) $(k).value = m[1];
+    return m;
+  }).map(([k]) => k);
+  if (found.length) {
+    $('paste').value = '';
+    showMsg('connMsg', `붙여넣기에서 ${found.join(', ')} 채움`, 'ok');
+  }
+};
+
+$('forget').onclick = () => {
+  try { localStorage.removeItem(STORE); } catch {}
+  $('ak').value = $('sk').value = $('st').value = '';
+  $('remember').checked = false;
+  showMsg('connMsg', '저장된 키를 지웠습니다', 'ok');
+};
+
+$('connect').onclick = async () => {
+  cfg = {
+    ak: $('ak').value.trim(), sk: $('sk').value.trim(), st: $('st').value.trim(),
+    region: $('region').value.trim(), bucket: $('bucket').value.trim(),
+    prefix: $('prefix').value.trim().replace(/^\/+/, ''),
+  };
+  if (!cfg.ak || !cfg.sk) return showMsg('connMsg', 'Access Key와 Secret Key를 입력하세요', 'err');
+  if (cfg.prefix && !cfg.prefix.endsWith('/')) cfg.prefix += '/';
+  try {
+    if ($('remember').checked) localStorage.setItem(STORE, JSON.stringify(cfg));
+    else localStorage.removeItem(STORE);
+  } catch {}
+  client = new AwsClient({
+    accessKeyId: cfg.ak, secretAccessKey: cfg.sk, sessionToken: cfg.st || undefined,
+    service: 's3', region: cfg.region,
+  });
+  showMsg('connMsg', '');
+  await openPrefix(cfg.prefix);
+};
+
+// --- S3 ---
+const baseUrl = () => `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com`;
+const encKey = key => key.split('/').map(encodeURIComponent).join('/');
+
+async function s3(url) {
+  let res;
+  try { res = await client.fetch(url); }
+  catch (e) { throw new Error(`요청 실패 (CORS 또는 네트워크 문제일 수 있어요)\n${e.message}`); }
+  if (!res.ok) {
+    const body = await res.text();
+    const code = body.match(/<Code>(.*?)<\/Code>/)?.[1] || res.status;
+    const msg = body.match(/<Message>(.*?)<\/Message>/)?.[1] || res.statusText;
+    const region = res.headers.get('x-amz-bucket-region');
+    throw new Error(`${code}: ${msg}${region ? `\n버킷 리전은 ${region} 입니다` : ''}`);
+  }
+  return res;
+}
+
+async function openPrefix(prefix, append = false) {
+  curPrefix = prefix;
+  renderCrumbs();
+  if (!append) { nextToken = null; $('list').innerHTML = '<div class="empty">불러오는 중…</div>'; }
+  const qs = new URLSearchParams({ 'list-type': '2', prefix, delimiter: '/', 'max-keys': '500' });
+  if (append && nextToken) qs.set('continuation-token', nextToken);
+  try {
+    const xml = new DOMParser().parseFromString(await (await s3(`${baseUrl()}/?${qs}`)).text(), 'application/xml');
+    const dirs = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(n => n.textContent);
+    const files = [...xml.querySelectorAll('Contents')].map(n => ({
+      key: n.querySelector('Key').textContent,
+      size: +n.querySelector('Size').textContent,
+      modified: n.querySelector('LastModified').textContent,
+    })).filter(f => f.key !== prefix);
+    nextToken = xml.querySelector('IsTruncated')?.textContent === 'true'
+      ? xml.querySelector('NextContinuationToken')?.textContent : null;
+    renderList(dirs, files, append);
+    if (!append) showMsg('connMsg', '연결됨', 'ok');
+  } catch (e) {
+    $('list').innerHTML = '<div class="empty">목록을 불러오지 못했습니다</div>';
+    showMsg('connMsg', e.message, 'err');
+  }
+}
+
+$('more').onclick = () => openPrefix(curPrefix, true);
+
+function renderCrumbs() {
+  $('loc').textContent = `s3://${cfg.bucket}/${curPrefix}`;
+  const root = cfg.prefix;
+  const rest = curPrefix.slice(root.length).split('/').filter(Boolean);
+  const parts = [`<a data-p="${esc(root)}">${esc(root || '/')}</a>`];
+  let acc = root;
+  for (const seg of rest) { acc += seg + '/'; parts.push(`<a data-p="${esc(acc)}">${esc(seg)}/</a>`); }
+  $('crumbs').innerHTML = parts.join(' ');
+  $('crumbs').querySelectorAll('a').forEach(a => a.onclick = () => openPrefix(a.dataset.p));
+}
+
+function renderList(dirs, files, append) {
+  const list = $('list');
+  if (!append) list.innerHTML = '';
+  if (!append && !dirs.length && !files.length) list.innerHTML = '<div class="empty">비어 있음</div>';
+  for (const d of dirs) {
+    const el = div('item', `<span class="name">📁 ${esc(d.slice(curPrefix.length))}</span>`);
+    el.onclick = () => openPrefix(d);
+    list.append(el);
+  }
+  for (const f of files) {
+    const el = div('item', `<span class="name">${esc(f.key.slice(curPrefix.length))}</span>
+      <span class="meta">${fmtSize(f.size)} · ${f.modified.slice(0, 10)}</span>`);
+    el.onclick = () => {
+      list.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
+      el.classList.add('sel');
+      openFile(f);
+    };
+    list.append(el);
+  }
+  $('more').style.display = nextToken ? '' : 'none';
+}
+
+// --- file viewer ---
+async function openFile(f) {
+  const v = $('viewer');
+  v.innerHTML = `<div class="empty">불러오는 중… (${fmtSize(f.size)})</div>`;
+  if (f.size > MAX_BYTES && !confirm(`${fmtSize(f.size)} 파일입니다. 그래도 불러올까요?`)) {
+    v.innerHTML = '<div class="empty">취소됨</div>'; return;
+  }
+  try {
+    const res = await s3(`${baseUrl()}/${encKey(f.key)}`);
+    let name = f.key.toLowerCase();
+    let text;
+    if (name.endsWith('.gz')) {
+      text = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
+      name = name.slice(0, -3);
+    } else text = await res.text();
+
+    const rows = parse(name, text);
+    renderFile(f, rows, text);
+  } catch (e) {
+    v.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+  }
+}
+
+function parse(name, text) {
+  const ext = name.split('.').pop();
+  try {
+    if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
+      const sep = ext === 'tsv' || (!text.split('\n')[0].includes(',') && text.split('\n')[0].includes('\t')) ? '\t' : ',';
+      return csvToRows(text, sep);
+    }
+    if (ext === 'jsonl' || ext === 'ndjson') {
+      return text.split('\n').filter(l => l.trim()).map(l => flatten(JSON.parse(l)));
+    }
+    if (ext === 'json') {
+      const j = JSON.parse(text);
+      const arr = Array.isArray(j) ? j : Object.values(j).find(Array.isArray);
+      return arr ? arr.map(flatten) : [flatten(j)];
+    }
+  } catch { return null; }
+  return null;
+}
+
+function csvToRows(text, sep) {
+  const out = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === sep) { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0] !== '') out.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); out.push(row); }
+  if (!out.length) return [];
+  const head = out.shift().map((h, i) => h.trim() || `col${i}`);
+  return out.map(r => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
+}
+
+function flatten(obj, pre = '', out = {}) {
+  if (obj === null || typeof obj !== 'object') { out[pre || 'value'] = obj; return out; }
+  for (const [k, v] of Object.entries(obj)) {
+    const key = pre ? `${pre}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v, key, out);
+    else out[key] = Array.isArray(v) ? JSON.stringify(v) : v;
+  }
+  return out;
+}
+
+function renderFile(f, rows, text) {
+  const v = $('viewer');
+  const head = `<div class="viewer-head"><span class="file">${esc(f.key.split('/').pop())}</span>
+    <span class="meta" style="color:var(--muted);font-size:12px">${fmtSize(f.size)} · ${f.modified.replace('T', ' ').slice(0, 19)}</span></div>`;
+
+  if (!rows || !rows.length) {
+    v.innerHTML = head + `<pre class="raw">${esc(text.slice(0, 20000))}${text.length > 20000 ? '\n…' : ''}</pre>`;
+    return;
+  }
+
+  const cols = Object.keys(rows[0]);
+  const numeric = cols.filter(c => {
+    const vals = rows.slice(0, 200).map(r => r[c]).filter(x => x !== '' && x != null);
+    return vals.length && vals.filter(x => isFinite(+x)).length / vals.length > 0.9;
+  });
+  const xDefault = cols.find(c => /time|date|ts|stamp/i.test(c)) || '(행 번호)';
+  const yDefault = numeric.filter(c => c !== xDefault).slice(0, 3);
+
+  v.innerHTML = head + `
+    <div class="stats">
+      <div class="stat"><b>${rows.length.toLocaleString()}</b><span>행</span></div>
+      <div class="stat"><b>${cols.length}</b><span>컬럼</span></div>
+      <div class="stat"><b>${numeric.length}</b><span>숫자 컬럼</span></div>
+    </div>
+    ${numeric.length ? `
+    <div class="controls">
+      <div><label>X축</label><select id="xSel">
+        <option>(행 번호)</option>${cols.map(c => `<option ${c === xDefault ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      </select></div>
+      <div><label>Y축</label><div class="ychecks" id="ySel">
+        ${numeric.map(c => `<label class="chip"><input type="checkbox" value="${esc(c)}" ${yDefault.includes(c) ? 'checked' : ''}>${esc(c)}</label>`).join('')}
+      </div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>` : ''}
+    <div class="table-wrap"><table>
+      <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.slice(0, MAX_ROWS_TABLE).map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+    ${rows.length > MAX_ROWS_TABLE ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">표는 처음 ${MAX_ROWS_TABLE}행만 표시</div>` : ''}`;
+
+  if (numeric.length) {
+    const draw = () => drawChart(rows, $('xSel').value, [...$('ySel').querySelectorAll('input:checked')].map(i => i.value));
+    $('xSel').onchange = draw;
+    $('ySel').onchange = draw;
+    draw();
+  }
+}
+
+function drawChart(rows, x, ys) {
+  if (chart) chart.destroy();
+  const step = Math.max(1, Math.ceil(rows.length / MAX_POINTS));
+  const sample = rows.filter((_, i) => i % step === 0);
+  const palette = ['#2f6fde', '#e0763a', '#2fa36b', '#c2459a', '#8a63d2', '#c9a227', '#1f9bb3', '#d0463f'];
+  const css = getComputedStyle(document.documentElement);
+  const grid = css.getPropertyValue('--line').trim(), muted = css.getPropertyValue('--muted').trim();
+  chart = new Chart($('chart'), {
+    type: 'line',
+    data: {
+      labels: sample.map((r, i) => x === '(행 번호)' ? i * step : r[x]),
+      datasets: ys.map((y, i) => ({
+        label: y, data: sample.map(r => r[y] === '' ? null : +r[y]),
+        borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+        borderWidth: 1.5, pointRadius: 0, tension: 0,
+      })),
+    },
+    options: {
+      animation: false, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: muted, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: grid } },
+        y: { ticks: { color: muted }, grid: { color: grid } },
+      },
+      plugins: { legend: { labels: { color: muted, boxWidth: 12 } } },
+    },
+  });
+}
+
+// --- utils ---
+function div(cls, html) { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; return d; }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+function fmtSize(b) { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (b >= 1024 && i < 3) { b /= 1024; i++; } return `${b.toFixed(i ? 1 : 0)} ${u[i]}`; }
+function showMsg(id, text, kind) { $(id).innerHTML = text ? `<div class="msg ${kind}">${esc(text)}</div>` : ''; }
+</script>
+</body>
+</html>
