@@ -27,7 +27,9 @@
   header { padding: 16px 24px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 18px; margin: 0; }
   header .loc { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
-  main { padding: 0 24px 24px; display: grid; gap: 16px; grid-template-columns: 280px 1fr; align-items: start; }
+  main { padding: 0 24px 24px; display: grid; gap: 16px; grid-template-columns: var(--side-w, 280px) 1fr; align-items: start; }
+  main.side-hidden { grid-template-columns: 1fr; }
+  main.side-hidden .side { display: none; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 0 16px 16px; } header { padding: 16px; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
@@ -48,7 +50,10 @@
   .msg.err { background: var(--danger-soft); color: var(--danger); }
   .msg.ok { background: var(--accent-soft); color: var(--accent); }
   .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; position: sticky; top: 16px; }
-  @media (max-width: 900px) { .side { position: static; } }
+  /* 폴더 영역 오른쪽 가장자리를 드래그해서 너비 조절 */
+  .side-resize { position: absolute; top: 0; bottom: 0; right: -12px; width: 8px; cursor: col-resize; border-radius: 4px; touch-action: none; }
+  .side-resize:hover, .side-resize.on { background: var(--accent-soft); }
+  @media (max-width: 900px) { .side { position: static; } .side-resize { display: none; } }
   .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
   details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
   pre { background: var(--soft); border-radius: 8px; padding: 10px; font-size: 11px; overflow: auto; margin: 8px 0 0; }
@@ -61,6 +66,7 @@
   .tnode.cur { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .tnode .tw { width: 14px; flex: 0 0 14px; color: var(--muted); text-align: center; font-size: 11px; }
   .tnode .tname { overflow: hidden; text-overflow: ellipsis; }
+  .tnode .tdate { margin-left: auto; padding-left: 6px; color: var(--muted); font-size: 11px; font-weight: 400; }
 
   /* 툴바 */
   .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -170,6 +176,7 @@
 
 <main>
   <div class="side">
+    <div class="side-resize" id="sideResize" title="드래그해서 너비 조절"></div>
     <section class="card" id="settings">
       <h2>연결 설정</h2>
       <label>키 붙여넣기 (env / ~/.aws/credentials / STS JSON)</label>
@@ -206,6 +213,7 @@
 
   <section class="card">
     <div class="toolbar">
+      <button class="nav" id="sideToggle" title="폴더 숨기기/보이기">☰</button>
       <button class="nav" id="navBack" title="뒤로">←</button>
       <button class="nav" id="navFwd" title="앞으로">→</button>
       <button class="nav" id="navUp" title="상위 폴더">↑</button>
@@ -312,11 +320,36 @@ $('connect').onclick = async () => {
 
 // 연결된 뒤에는 설정 카드를 숨기고 ⚙ 버튼으로만 열기
 function showSettings(show) {
+  if (show) setSide(true);
   $('settings').hidden = !show;
   $('settingsBtn').hidden = !client;
   $('settingsBtn').textContent = show ? '설정 닫기' : '⚙ 설정';
 }
 $('settingsBtn').onclick = () => showSettings($('settings').hidden);
+
+// --- 폴더 영역: 너비 조절 + 숨기기 (이 브라우저에 기억) ---
+const main = document.querySelector('main');
+function setSide(visible) {
+  main.classList.toggle('side-hidden', !visible);
+  try { localStorage.setItem('s3viewer.side', visible ? '' : 'hidden'); } catch {}
+}
+$('sideToggle').onclick = () => setSide(main.classList.contains('side-hidden'));
+try {
+  const w = +localStorage.getItem('s3viewer.sideW');
+  if (w) main.style.setProperty('--side-w', `${w}px`);
+  if (localStorage.getItem('s3viewer.side') === 'hidden') main.classList.add('side-hidden');
+} catch {}
+$('sideResize').onpointerdown = e => {
+  const h = $('sideResize'), x0 = e.clientX, w0 = document.querySelector('.side').getBoundingClientRect().width;
+  h.setPointerCapture(e.pointerId);
+  h.classList.add('on');
+  h.onpointermove = m => main.style.setProperty('--side-w', `${Math.round(Math.max(180, Math.min(600, w0 + m.clientX - x0)))}px`);
+  h.onpointerup = () => {
+    h.onpointermove = null;
+    h.classList.remove('on');
+    try { localStorage.setItem('s3viewer.sideW', parseInt(main.style.getPropertyValue('--side-w'))); } catch {}
+  };
+};
 
 // --- S3 ---
 const baseUrl = () => `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com`;
@@ -495,7 +528,7 @@ $('navUp').onclick = () => {
   const r = rel(curPrefix).split('/').filter(Boolean);
   go(cfg.prefix + (r.length > 1 ? r.slice(0, -1).join('/') + '/' : ''));
 };
-$('refresh').onclick = () => { listed = false; memo.clear(); route(); };
+$('refresh').onclick = () => { listed = false; memo.clear(); folderTime.clear(); tree.clear(); route(); };
 
 async function route() {
   let r = '';
@@ -534,8 +567,10 @@ async function openPrefix(prefix, append = false, quiet = false) {
     if (append) { listing.dirs.push(...dirs); listing.files.push(...files); }
     else listing = { dirs, files };
     listed = true;
+    await timesFor(prefix);
+    listing.dirs = byNewest(listing.dirs);
     files.filter(f => MCAP.test(f.key)).forEach(f => loadMeta(f.key));
-    await syncTree(prefix, append ? null : dirs);
+    await syncTree(prefix, append ? null : listing.dirs);
     renderUsers();
     if (!quiet) renderContent();
     showMsg('connMsg', '연결됨', 'ok');
@@ -563,12 +598,34 @@ function renderPath() {
 }
 
 // --- 폴더 트리 ---
+// 폴더 시각 = 안에 든 파일 중 가장 최근 업로드. S3는 폴더 날짜를 주지 않아서
+// 상위 폴더 아래 목록을 한 번에 받아 하위 폴더별 최신 LastModified를 계산
+const folderTime = new Map(); // prefix → ISO 시각
+const timesFor = parent => cached('times:' + parent, async () => {
+  let token = null, pages = 0;
+  do {
+    const qs = new URLSearchParams({ 'list-type': '2', prefix: parent });
+    if (token) qs.set('continuation-token', token);
+    const xml = await listXml(qs);
+    for (const n of xml.querySelectorAll('Contents')) {
+      const rest = n.querySelector('Key').textContent.slice(parent.length), cut = rest.indexOf('/');
+      if (cut < 0) continue;
+      const child = parent + rest.slice(0, cut + 1), m = n.querySelector('LastModified').textContent;
+      if (m > (folderTime.get(child) || '')) folderTime.set(child, m);
+    }
+    token = xml.querySelector('IsTruncated')?.textContent === 'true' ? xml.querySelector('NextContinuationToken')?.textContent : null;
+  } while (token && ++pages < 20); // 파일 2만 개까지만 보고 정렬
+});
+// 최근 업로드가 위로, 시각이 같거나 모르면 이름 내림차순
+const byNewest = dirs => [...dirs].sort((a, b) => (folderTime.get(b) || '').localeCompare(folderTime.get(a) || '') || b.localeCompare(a));
+
 async function treeKids(p) {
   if (!tree.has(p)) tree.set(p, { open: false, children: null });
   const n = tree.get(p);
   if (!n.children) {
     const xml = await listXml(new URLSearchParams({ 'list-type': '2', prefix: p, delimiter: '/', 'max-keys': '1000' }));
-    n.children = [...xml.querySelectorAll('CommonPrefixes > Prefix')].map(x => x.textContent);
+    await timesFor(p);
+    n.children = byNewest([...xml.querySelectorAll('CommonPrefixes > Prefix')].map(x => x.textContent));
   }
   return n;
 }
@@ -591,7 +648,7 @@ function renderTree() {
     const name = p === cfg.prefix ? `🏠 ${cfg.prefix.split('/').filter(Boolean).pop() || cfg.bucket}` : `📁 ${p.slice(0, -1).split('/').pop()}`;
     const leaf = n?.children && !n.children.length;
     out.push(`<div class="tnode ${p === curPrefix ? 'cur' : ''}" data-p="${esc(p)}" style="padding-left:${8 + depth * 14}px">
-      <span class="tw">${leaf ? '' : n?.open ? '▾' : '▸'}</span><span class="tname">${esc(name)}</span>${userBadge(userOfPath(p))}</div>`);
+      <span class="tw">${leaf ? '' : n?.open ? '▾' : '▸'}</span><span class="tname">${esc(name)}</span>${userBadge(userOfPath(p))}<span class="tdate">${fmtDate(folderTime.get(p)).slice(0, 10)}</span></div>`);
     if (n?.open && n.children) n.children.forEach(c => walk(c, depth + 1));
   };
   walk(cfg.prefix, 0);
@@ -641,7 +698,8 @@ function renderContent() {
 
 const fileIcon = k => VIDEO.test(k) ? '🎬' : IMAGE.test(k) ? '🖼' : MCAP.test(k) ? '📊' : '📄';
 const pickBox = k => `<input type="checkbox" class="pick" data-k="${esc(k)}" ${picked.has(k) ? 'checked' : ''}>`;
-const fmtDate = s => s ? s.replace('T', ' ').slice(0, 16) : '';
+// S3 시각(UTC) → 이 컴퓨터 시간대, 'YYYY-MM-DD HH:MM'
+const fmtDate = s => s ? new Date(s).toLocaleString('sv-SE').slice(0, 16) : '';
 
 function renderTable(list) {
   const name = k => k.slice(curPrefix.length);
@@ -649,7 +707,7 @@ function renderTable(list) {
   setContent(`<div class="files-wrap"><table class="files">
     <thead><tr><th class="ck"></th><th>이름</th><th>사용자</th><th>작업</th><th class="num">크기</th><th>수정일</th></tr></thead>
     <tbody>${list.map(it => it.dir
-      ? `<tr data-open="${esc(it.key)}"><td class="ck">${pickBox(it.key)}</td><td class="nm">📁 ${esc(name(it.key))}</td>${userCell(it.key)}<td></td><td class="num">—</td><td></td></tr>`
+      ? `<tr data-open="${esc(it.key)}"><td class="ck">${pickBox(it.key)}</td><td class="nm">📁 ${esc(name(it.key))}</td>${userCell(it.key)}<td></td><td class="num">—</td><td class="dt">${fmtDate(folderTime.get(it.key))}</td></tr>`
       : `<tr data-open="${esc(it.key)}"><td class="ck">${pickBox(it.key)}</td><td class="nm" title="${esc(name(it.key))}">${fileIcon(it.key)} ${esc(name(it.key))}</td>
           ${userCell(it.key)}<td data-mk="${esc(it.key)}" data-f="task">${esc(taskOf(it.key))}</td>
           <td class="num">${fmtSize(it.size)}</td><td class="dt">${fmtDate(it.modified)}</td></tr>`).join('')}
